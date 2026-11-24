@@ -1,4 +1,4 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { afterNextRender, Component, computed, ElementRef, inject, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { forkJoin } from 'rxjs';
 
@@ -31,6 +31,7 @@ export class PosComponent {
   private readonly socket = inject(SocketService);
 
   readonly cart = inject(CartStore);
+  private readonly searchInput = viewChild<ElementRef<HTMLInputElement>>('searchInput');
   readonly formatMoney = formatMoney;
   readonly round2 = round2;
 
@@ -43,6 +44,7 @@ export class PosComponent {
   readonly paymentMethod = signal<string>('Efectivo USD');
   readonly paidAmount = signal(0);
   readonly submitting = signal(false);
+  readonly checkoutOpen = signal(false);
   readonly loading = signal(true);
   readonly lastSale = signal<Sale | null>(null);
   readonly idempotencyKey = signal<string | null>(null);
@@ -75,6 +77,8 @@ export class PosComponent {
   readonly canCharge = computed(() => this.rateStatus() !== 'EXPIRED');
 
   constructor() {
+    afterNextRender(() => this.searchInput()?.nativeElement.focus());
+
     if (this.tokens.isAuthenticated()) this.socket.connect();
     this.loadCatalog();
 
@@ -89,6 +93,14 @@ export class PosComponent {
 
   onSearchInput(value: string): void {
     this.search.set(value);
+  }
+
+  openCheckout(): void {
+    if (!this.cart.isEmpty()) this.checkoutOpen.set(true);
+  }
+
+  closeCheckout(): void {
+    this.checkoutOpen.set(false);
   }
 
   lookupBarcode(): void {
@@ -201,6 +213,7 @@ export class PosComponent {
         next: (sale) => {
           this.lastSale.set(sale);
           this.cart.clear();
+          this.checkoutOpen.set(false);
           this.paidAmount.set(0);
           this.idempotencyKey.set(null);
           this.toasts.success(`Venta ${sale.number} registrada correctamente.`);

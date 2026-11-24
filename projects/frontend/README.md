@@ -2,7 +2,7 @@
 
 [← Volver al README principal](../../README.md)
 
-SPA del punto de venta: búsqueda de productos, carrito reactivo, cobro en USD/VES y descarga de factura.
+SPA de gestión comercial: punto de venta, inventario, historial de ventas y reportes, con cobro en USD/VES y descarga de factura.
 
 **Stack:** Angular 22 standalone · Signals · Bootstrap 5.3 · Bootstrap Icons · Socket.IO 4 · Vitest/jsdom.
 
@@ -42,6 +42,17 @@ Inicia sesión con el administrador creado por `npm run seed` en el backend. La 
 5. **Registro**: `POST /api/sales` envía una clave UUID en `X-Idempotency-Key`, reutilizada si el usuario reintenta. Ante error de stock, permisos o tasa, se muestra `userMessage` y `suggestion` del backend.
 6. **Factura**: tras la venta se descarga `invoice.pdfUrl` con JWT. Los eventos `sale:created`, `stock:updated`, `stock:low` e `invoice:ready` actualizan la interfaz en vivo.
 
+## Rutas
+
+| Ruta | Componente | Acceso |
+|---|---|---|
+| `/pos` | `features/pos` | ADMIN, SUPERVISOR, CASHIER |
+| `/inventario` | `features/inventario` | cualquier usuario autenticado |
+| `/ventas` | `features/ventas` | ADMIN, SUPERVISOR, CASHIER |
+| `/reportes` | `features/reportes` | ADMIN, SUPERVISOR, FINANCE |
+
+El sidebar colapsa en pantallas menores a 992 px mediante un botón hamburguesa. El widget del topbar consulta la tasa BCV cada 5 minutos y muestra su estado (vigente, desactualizada o vencida).
+
 ## Arquitectura
 
 ```text
@@ -55,15 +66,18 @@ src/app/
 │   └── services/          API, autenticación, tokens, sockets, toasts
 ├── features/
 │   ├── auth/              login
-│   └── pos/               POS, carrito con signals y store por ruta
-└── shared/                layout, toasts, cálculo de carrito y dinero
+│   ├── inventario/        tabla de stock con resaltado de mínimo y socket
+│   ├── pos/               POS, carrito con signals, store y modal de cobro
+│   ├── reportes/          KPIs y gráficos CSS desde /api/reports
+│   └── ventas/            historial y descarga de comprobantes
+└── shared/                layout (sidebar, widget BCV), toasts, dinero
 ```
 
-Solo los roles `ADMIN`, `SUPERVISOR` y `CASHIER` entran al POS; `WAREHOUSE` es redirigido al login. El tema claro/oscuro se guarda en `localStorage`. La sesión se limpia al cerrar sesión o si el refresh falla.
+Solo los roles `ADMIN`, `SUPERVISOR` y `CASHIER` entran al POS y a Ventas; `WAREHOUSE` usa Inventario y es redirigido al login si intenta entrar al POS. Reportes está restringido por `reportGuard` a `ADMIN`, `SUPERVISOR` y `FINANCE`. El tema claro/oscuro se guarda en `localStorage`. La sesión se limpia al cerrar sesión o si el refresh falla.
 
 ## Pruebas y verificación real
 
-Las 11 pruebas unitarias cubren cálculo de IVA con descuento, inclusión de IVA en el precio, conversión a VES, redondeo HALF_UP, formato monetario, carrito con lotes, desenvuelto del sobre API, errores legibles y header de petición.
+Las 21 pruebas unitarias cubren cálculo de IVA con descuento, inclusión de IVA en el precio, conversión a VES, redondeo HALF_UP, formato monetario, carrito con lotes, desenvuelto del sobre API, errores legibles, header de petición, filtros y orden del inventario, detección de stock mínimo, formato de fecha en Caracas y construcción de KPIs y barras de reportes.
 
 La verificación end-to-end se ejecutó contra un backend real en puerto `3502` y la base temporal `pymeplus_ia_frontend_e2e`, eliminada al terminar. Resultado: login, catálogo, venta `VTA-2026-000001`, factura `FAC-2026-000001`, total `2.44 USD`, reintento idempotente, eventos `invoice:ready`/`sale:created`/`stock:updated`, PDF de 1924 bytes y SPA servida desde el backend. El script efímero no se versiona.
 

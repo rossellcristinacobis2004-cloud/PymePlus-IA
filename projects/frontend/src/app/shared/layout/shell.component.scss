@@ -1,3 +1,35 @@
 .app-shell__topbar {
   min-height: 60px;
 }
+
+.app-shell__nav-toggle {
+  display: none;
+}
+
+@media (max-width: 991.98px) {
+  .app-shell__nav-toggle {
+    display: inline-flex;
+  }
+
+  .app-shell__sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 1040;
+    width: 260px;
+    max-width: 85vw;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: 0 0.5rem 2rem rgba(15, 23, 42, 0.2);
+  }
+
+  .app-shell--sidebar-open .app-shell__sidebar {
+    transform: translateX(0);
+  }
+
+  .app-shell__backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1035;
+    background: rgba(15, 23, 42, 0.45);
+  }
+}

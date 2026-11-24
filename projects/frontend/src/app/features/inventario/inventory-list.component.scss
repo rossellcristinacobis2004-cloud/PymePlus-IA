@@ -1,0 +1,8 @@
+.table thead th {
+  white-space: nowrap;
+  font-size: 0.8rem;
+}
+
+.table tbody tr.table-danger {
+  --bs-table-bg-state: rgba(220, 53, 69, 0.1);
+}

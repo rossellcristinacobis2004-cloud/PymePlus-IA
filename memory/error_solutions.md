@@ -215,3 +215,9 @@ Registro de errores y parches aplicados.
 ### Posible error lógico del sobre con HTTP 200
 - **Causa:** si una respuesta llegaba con `success: false` y status 200, `map()` devolvía `data: null` como si nada hubiera fallado.
 - **Solución:** `ApiService.unwrap()` lanza `ApiError` cuando `success` es falso, usando `userMessage` y el primer `issue` del sobre.
+
+## 2026-11-24 — Segunda fase del frontend
+
+### Prueba de fecha esperaba año de 4 dígitos
+- **Causa:** `dateStyle: 'short'` de `Intl.DateTimeFormat('es-VE')` produjo `24/11/26`, mientras la aserción esperaba `24/11/2026`.
+- **Solución:** reemplazar `dateStyle`/`timeStyle` por opciones explícitas (`year: 'numeric'`, `month`, `day`, `hour`, `minute`, `timeZone: 'America/Caracas'`). Salida estable y legible en el historial de ventas.

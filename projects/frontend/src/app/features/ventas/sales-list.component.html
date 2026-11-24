@@ -1,0 +1,79 @@
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div>
+    <h1 class="h4 mb-1">Ventas</h1>
+    <p class="text-secondary small mb-0">Últimas operaciones registradas y sus comprobantes.</p>
+  </div>
+  <button type="button" class="btn btn-sm btn-outline-primary" (click)="load()">
+    <i class="bi bi-arrow-clockwise me-1"></i>
+    Actualizar
+  </button>
+</div>
+
+@if (errorMessage(); as message) {
+  <div class="alert alert-danger d-flex justify-content-between align-items-center" role="alert">
+    <span><i class="bi bi-exclamation-triangle me-2"></i>{{ message }}</span>
+    <button type="button" class="btn btn-sm btn-outline-danger" (click)="load()">Reintentar</button>
+  </div>
+}
+
+<div class="panel">
+  <div class="panel__header d-flex align-items-center gap-2">
+    <i class="bi bi-receipt"></i>
+    Historial
+  </div>
+  <div class="p-3">
+    @if (loading()) {
+      <div class="text-center py-5 text-secondary">
+        <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+        Cargando ventas...
+      </div>
+    } @else if (sales().length === 0) {
+      <div class="text-center py-5 text-secondary">
+        <i class="bi bi-receipt-cutoff fs-2 d-block mb-2"></i>
+        Todavía no hay ventas registradas.
+      </div>
+    } @else {
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>Factura</th>
+              <th>Cliente</th>
+              <th>Fecha</th>
+              <th>Método de pago</th>
+              <th class="text-end">Total USD</th>
+              <th class="text-end">Total VES</th>
+              <th class="text-end">PDF</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (sale of sales(); track sale.id) {
+              <tr>
+                <td class="fw-semibold text-nowrap">{{ sale.invoiceNumber }}</td>
+                <td>{{ sale.customerName || 'Consumidor final' }}</td>
+                <td class="small text-secondary text-nowrap">{{ formatSaleDate(sale.createdAt) }}</td>
+                <td class="small">{{ sale.paymentMethod }}</td>
+                <td class="text-end tabular-nums">{{ formatMoney(sale.totalUSD, 'USD') }}</td>
+                <td class="text-end tabular-nums">{{ formatMoney(sale.totalVES, 'VES') }}</td>
+                <td class="text-end">
+                  @if (sale.invoice?.pdfUrl) {
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-link"
+                      [attr.aria-label]="'Descargar factura ' + sale.invoiceNumber"
+                      (click)="downloadInvoice(sale)"
+                    >
+                      <i class="bi bi-download"></i>
+                    </button>
+                  } @else {
+                    <span class="text-secondary small">—</span>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </div>
+</div>

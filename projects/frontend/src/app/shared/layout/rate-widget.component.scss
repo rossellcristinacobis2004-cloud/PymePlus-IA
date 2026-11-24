@@ -1,0 +1,10 @@
+.rate-widget {
+  white-space: nowrap;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.5rem;
+  background: rgba(15, 118, 110, 0.06);
+}
+
+[data-bs-theme='dark'] .rate-widget {
+  background: rgba(45, 212, 191, 0.08);
+}

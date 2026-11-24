@@ -49,6 +49,7 @@
       </div>
       <div class="p-3">
         <input
+          #searchInput
           type="search"
           class="form-control form-control-lg"
           placeholder="Nombre, SKU o código de barras"
@@ -205,9 +206,30 @@
           </div>
         }
 
-        <hr />
+        <div class="d-flex justify-content-between align-items-center border-top pt-3 mt-3">
+          <div>
+            <div class="text-secondary small">Total estimado</div>
+            <div class="fs-4 money-strong text-primary tabular-nums">
+              {{ formatMoney(totals().total, currency()) }}
+            </div>
+          </div>
+          <button type="button" class="btn btn-primary" [disabled]="cart.isEmpty()" (click)="openCheckout()">
+            <i class="bi bi-credit-card me-2"></i>
+            Continuar al cobro
+          </button>
+        </div>
 
-        <div class="d-flex gap-2 mb-3" role="group" aria-label="Moneda de cobro">
+        @if (checkoutOpen()) {
+          <div class="checkout-backdrop" (click)="closeCheckout()" aria-hidden="true"></div>
+          <div class="checkout-modal" role="dialog" aria-modal="true" aria-labelledby="checkout-title">
+            <div class="checkout-modal__header d-flex justify-content-between align-items-center">
+              <h2 id="checkout-title" class="h6 mb-0">Cobro de la venta</h2>
+              <button type="button" class="btn-close" aria-label="Cerrar cobro" (click)="closeCheckout()"></button>
+            </div>
+            <div class="checkout-modal__body">
+              <hr class="mt-2" />
+
+              <div class="d-flex gap-2 mb-3" role="group" aria-label="Moneda de cobro">
           <button
             type="button"
             class="btn btn-sm flex-fill"
@@ -294,6 +316,9 @@
             Cobrar {{ formatMoney(totals().total, currency()) }}
           }
         </button>
+            </div>
+          </div>
+        }
       </div>
     </div>
   </section>

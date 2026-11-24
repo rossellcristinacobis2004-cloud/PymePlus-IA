@@ -1,0 +1,103 @@
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div>
+    <h1 class="h4 mb-1">Reportes</h1>
+    <p class="text-secondary small mb-0">Resumen del día {{ period() }} · zona America/Caracas.</p>
+  </div>
+  <button type="button" class="btn btn-sm btn-outline-primary" (click)="load()">
+    <i class="bi bi-arrow-clockwise me-1"></i>
+    Actualizar
+  </button>
+</div>
+
+@if (errorMessage(); as message) {
+  <div class="alert alert-danger d-flex justify-content-between align-items-center" role="alert">
+    <span><i class="bi bi-exclamation-triangle me-2"></i>{{ message }}</span>
+    <button type="button" class="btn btn-sm btn-outline-danger" (click)="load()">Reintentar</button>
+  </div>
+}
+
+@if (loading()) {
+  <div class="text-center py-5 text-secondary">
+    <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+    Generando reportes...
+  </div>
+} @else if (!errorMessage()) {
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-md-4">
+      <div class="panel kpi-card h-100">
+        <div class="panel__header"><i class="bi bi-cash-stack"></i> Ventas del día</div>
+        <div class="p-3">
+          <div class="fs-4 money-strong text-primary tabular-nums">
+            {{ formatMoney(kpis().salesTodayUSD, 'USD') }}
+          </div>
+          <div class="text-secondary small">Ventas brutas en USD</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="panel kpi-card h-100">
+        <div class="panel__header"><i class="bi bi-receipt"></i> Total operaciones</div>
+        <div class="p-3">
+          <div class="fs-4 fw-semibold tabular-nums">{{ kpis().operations }}</div>
+          <div class="text-secondary small">Ventas completadas</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="panel kpi-card h-100">
+        <div class="panel__header"><i class="bi bi-trophy"></i> Producto más vendido</div>
+        <div class="p-3">
+          <div class="fs-5 fw-semibold text-truncate">{{ kpis().topProduct || 'Sin datos' }}</div>
+          <div class="text-secondary small">{{ kpis().topProductUnits }} unidades</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-7">
+      <div class="panel h-100">
+        <div class="panel__header"><i class="bi bi-bar-chart-line"></i> Ventas por día</div>
+        <div class="p-3">
+          @if (bars().length === 0) {
+            <p class="text-secondary small mb-0">No hay ventas en el período seleccionado.</p>
+          } @else {
+            @for (bar of bars(); track bar.label) {
+              <div class="chart-row">
+                <div class="d-flex justify-content-between small mb-1">
+                  <span class="text-truncate">{{ bar.label }}</span>
+                  <span class="tabular-nums">{{ formatMoney(bar.value, 'USD') }}</span>
+                </div>
+                <div class="bar-track">
+                  <div class="bar-fill" [style.width.%]="bar.percent"></div>
+                </div>
+              </div>
+            }
+          }
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-5">
+      <div class="panel h-100">
+        <div class="panel__header"><i class="bi bi-box-seam"></i> Productos más vendidos</div>
+        <div class="p-3">
+          @if (topProductBars().length === 0) {
+            <p class="text-secondary small mb-0">No hay productos vendidos en el período.</p>
+          } @else {
+            @for (bar of topProductBars(); track bar.label) {
+              <div class="chart-row">
+                <div class="d-flex justify-content-between small mb-1">
+                  <span class="text-truncate">{{ bar.label }}</span>
+                  <span class="tabular-nums">{{ bar.value }} und</span>
+                </div>
+                <div class="bar-track">
+                  <div class="bar-fill bar-fill--alt" [style.width.%]="bar.percent"></div>
+                </div>
+              </div>
+            }
+          }
+        </div>
+      </div>
+    </div>
+  </div>
+}

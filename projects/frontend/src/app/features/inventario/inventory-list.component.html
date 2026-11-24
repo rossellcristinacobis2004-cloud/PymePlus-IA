@@ -1,0 +1,91 @@
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div>
+    <h1 class="h4 mb-1">Inventario</h1>
+    <p class="text-secondary small mb-0">Stock disponible por producto, actualizado en tiempo real.</p>
+  </div>
+  <span
+    class="badge"
+    [class.text-bg-danger]="lowStockCount() > 0"
+    [class.text-bg-success-subtle]="lowStockCount() === 0"
+  >
+    {{ lowStockCount() }} con stock mínimo
+  </span>
+</div>
+
+@if (errorMessage(); as message) {
+  <div class="alert alert-danger d-flex justify-content-between align-items-center" role="alert">
+    <span><i class="bi bi-exclamation-triangle me-2"></i>{{ message }}</span>
+    <button type="button" class="btn btn-sm btn-outline-danger" (click)="load()">Reintentar</button>
+  </div>
+}
+
+<div class="panel">
+  <div class="panel__header d-flex align-items-center gap-2">
+    <i class="bi bi-box-seam"></i>
+    Productos
+  </div>
+  <div class="p-3">
+    <input
+      type="search"
+      class="form-control"
+      placeholder="Buscar por nombre, SKU, código de barras o categoría"
+      aria-label="Buscar productos en el inventario"
+      autocomplete="off"
+      [value]="search()"
+      (input)="onSearch($any($event.target).value)"
+    />
+
+    @if (loading()) {
+      <div class="text-center py-5 text-secondary">
+        <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+        Cargando inventario...
+      </div>
+    } @else if (visibleProducts().length === 0) {
+      <div class="text-center py-5 text-secondary">
+        <i class="bi bi-inbox fs-2 d-block mb-2"></i>
+        No hay productos para esa búsqueda.
+      </div>
+    } @else {
+      <div class="table-responsive mt-3">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>
+                <button type="button" class="btn btn-link btn-sm p-0" (click)="sortBy('sku')">SKU</button>
+              </th>
+              <th>
+                <button type="button" class="btn btn-link btn-sm p-0" (click)="sortBy('name')">Producto</button>
+              </th>
+              <th>Categoría</th>
+              <th class="text-end">Precio USD</th>
+              <th class="text-end">
+                <button type="button" class="btn btn-link btn-sm p-0" (click)="sortBy('stock')">Stock</button>
+              </th>
+              <th class="text-end">Mínimo</th>
+              <th class="text-center">Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (product of visibleProducts(); track product.id) {
+              <tr [class.table-danger]="isLowStock(product)">
+                <td class="small text-nowrap">{{ product.sku }}</td>
+                <td class="fw-semibold">{{ product.name }}</td>
+                <td class="small text-secondary">{{ product.category }}</td>
+                <td class="text-end tabular-nums small">{{ formatMoney(product.priceUSD, 'USD') }}</td>
+                <td class="text-end tabular-nums fw-semibold">{{ product.stock.available }}</td>
+                <td class="text-end tabular-nums text-secondary">{{ product.stock.minimum }}</td>
+                <td class="text-center">
+                  @if (isLowStock(product)) {
+                    <span class="badge text-bg-danger">Stock mínimo</span>
+                  } @else {
+                    <span class="badge text-bg-success-subtle text-success-emphasis">Normal</span>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </div>
+</div>
