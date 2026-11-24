@@ -68,6 +68,29 @@ try {
   const token = login.body.data.token;
   check('login entrega refresh token', Boolean(login.body.data.refreshToken));
 
+  const { default: RefreshToken } = await import('../api/auth/refresh-token.model.js');
+  const storedRefresh = await RefreshToken.findOne({ userId: login.body.data.user.id }).lean();
+  check(
+    'refresh token persistido solo como hash',
+    Boolean(storedRefresh) &&
+      storedRefresh.tokenHash !== login.body.data.refreshToken &&
+      /^[a-f0-9]{64}$/.test(storedRefresh.tokenHash)
+  );
+
+  const refreshed = await request('/api/auth/refresh', {
+    method: 'POST',
+    body: { refreshToken: login.body.data.refreshToken }
+  });
+  check(
+    'renovación de sesión con rotación',
+    refreshed.status === 200 && Boolean(refreshed.body.data.token) && Boolean(refreshed.body.data.refreshToken)
+  );
+  const reuse = await request('/api/auth/refresh', {
+    method: 'POST',
+    body: { refreshToken: login.body.data.refreshToken }
+  });
+  check('refresh token anterior queda revocado', reuse.status === 401);
+
   // Captura de eventos Socket.IO sin depender de un cliente externo.
   const emitted = [];
   const originalEmit = server.io.emit.bind(server.io);
@@ -257,6 +280,76 @@ try {
     'anulación descuenta el saldo real de crédito',
     (await Customer.findById(creditCustomer._id)).credit.balanceUSD === 0,
     `saldo=${(await Customer.findById(creditCustomer._id)).credit.balanceUSD}`
+  );
+
+  // CRUD completo de inventario con un producto aislado del flujo de facturación.
+  const catalog = await request('/api/products', {
+    method: 'POST',
+    token,
+    body: {
+      sku: 'INT-000002',
+      name: 'Producto de catálogo',
+      category: 'Abarrotes',
+      imageUrl: '/uploads/images/catalogo.png',
+      priceUSD: 5,
+      stockCurrent: 2,
+      stockMinimum: 1
+    }
+  });
+  check(
+    'crear producto con categoría e imagen',
+    catalog.status === 201 &&
+      catalog.body.data.category === 'Abarrotes' &&
+      catalog.body.data.imageUrl === '/uploads/images/catalogo.png' &&
+      catalog.body.data.isActive === true,
+    JSON.stringify(catalog.body)
+  );
+  const catalogId = catalog.body.data.id;
+
+  const search = await request('/api/products?q=000002', { token });
+  check(
+    'búsqueda por texto',
+    search.status === 200 && search.body.data.some((item) => item.id === catalogId)
+  );
+
+  const bySku = await request('/api/products/sku/INT-000002', { token });
+  check('búsqueda por SKU', bySku.status === 200 && bySku.body.data.id === catalogId);
+
+  const updated = await request(`/api/products/${catalogId}`, {
+    method: 'PATCH',
+    token,
+    body: { name: 'Producto actualizado', priceUSD: 6, category: 'Bebidas' }
+  });
+  check(
+    'actualizar producto',
+    updated.status === 200 &&
+      updated.body.data.name === 'Producto actualizado' &&
+      updated.body.data.priceUSD === 6 &&
+      updated.body.data.category === 'Bebidas',
+    JSON.stringify(updated.body)
+  );
+
+  const adjusted = await request(`/api/products/${catalogId}/stock-adjustments`, {
+    method: 'POST',
+    token,
+    body: { reason: 'RECEIPT', quantity: 5 }
+  });
+  check(
+    'ajuste de stock atómico',
+    adjusted.status === 201 && adjusted.body.data.stockCurrent === 7,
+    JSON.stringify(adjusted.body)
+  );
+
+  const removed = await request(`/api/products/${catalogId}`, { method: 'DELETE', token });
+  check(
+    'baja lógica del producto',
+    removed.status === 200 && removed.body.data.isActive === false
+  );
+
+  const inactive = await request('/api/products?active=false', { token });
+  check(
+    'filtro por producto inactivo',
+    inactive.status === 200 && inactive.body.data.some((item) => item.id === catalogId)
   );
 
   console.log(`\nINTEGRATION OK (${passed} verificaciones)`);

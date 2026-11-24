@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Router } from 'express';
 import jwt from 'jsonwebtoken';
 import User from './user.model.js';
+import RefreshToken from './refresh-token.model.js';
 import { requireAuth } from '../../middlewares/auth.js';
 import { loginLimiter } from '../../middlewares/rate-limit.js';
 import { ok, nowIso } from '../../helpers/response.js';
@@ -24,9 +25,24 @@ function issueAccessToken(user) {
   );
 }
 
+function hashToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
 function issueRefreshToken(user) {
-  return jwt.sign({ sub: user.id, type: 'refresh' }, REFRESH_SECRET(), {
+  const token = jwt.sign({ sub: user.id, type: 'refresh', jti: crypto.randomUUID() }, REFRESH_SECRET(), {
     expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d'
+  });
+  const expiresAt = new Date((jwt.decode(token).exp || 0) * 1000);
+  return { token, expiresAt };
+}
+
+async function persistRefreshToken(user, refreshToken, req) {
+  await RefreshToken.create({
+    userId: user.id,
+    tokenHash: hashToken(refreshToken.token),
+    expiresAt: refreshToken.expiresAt,
+    userAgent: req.headers['user-agent'] || null
   });
 }
 
@@ -52,11 +68,12 @@ router.post('/login', loginLimiter, async (req, res, next) => {
 
     const token = issueAccessToken(user);
     const refreshToken = issueRefreshToken(user);
+    await persistRefreshToken(user, refreshToken, req);
 
     return ok(res, {
       data: {
         token,
-        refreshToken,
+        refreshToken: refreshToken.token,
         tokenType: 'Bearer',
         expiresIn: process.env.JWT_EXPIRES_IN || '8h',
         user: user.toSafeObject()
@@ -81,13 +98,25 @@ router.post('/refresh', async (req, res, next) => {
     }
     if (payload.type !== 'refresh') throw unauthorized('Token no válido para renovación.');
 
+    const stored = await RefreshToken.findOne({
+      tokenHash: hashToken(token),
+      revokedAt: null,
+      expiresAt: { $gt: new Date() }
+    });
+    if (!stored) throw unauthorized('Refresh token revocado o expirado.');
+
     const user = await User.findById(payload.sub);
     if (!user || !user.active) throw unauthorized('Usuario no disponible.');
+
+    const refreshToken = issueRefreshToken(user);
+    stored.revokedAt = new Date();
+    await stored.save();
+    await persistRefreshToken(user, refreshToken, req);
 
     return ok(res, {
       data: {
         token: issueAccessToken(user),
-        refreshToken: issueRefreshToken(user),
+        refreshToken: refreshToken.token,
         tokenType: 'Bearer',
         expiresIn: process.env.JWT_EXPIRES_IN || '8h',
         user: user.toSafeObject()
