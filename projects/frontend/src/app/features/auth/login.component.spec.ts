@@ -24,6 +24,16 @@ describe('LoginComponent', () => {
     expect(fixture.componentInstance.form.invalid).toBe(true);
   });
 
+  it('no revela credenciales ni rutas de archivos en pantalla', async () => {
+    const fixture = TestBed.createComponent(LoginComponent);
+    await fixture.whenStable();
+    const text = (fixture.nativeElement as HTMLElement).textContent || '';
+
+    expect(text.toLowerCase()).not.toContain('credenciales');
+    expect(text).not.toContain('.env');
+    expect(text).toContain('Ingresar al sistema');
+  });
+
   it('muestra una guía cuando la contraseña es demasiado corta', async () => {
     const fixture = TestBed.createComponent(LoginComponent);
     fixture.componentInstance.form.controls.password.setValue('abc');

@@ -225,3 +225,18 @@ Registro de errores y parches aplicados.
 ### Login no respondía al hacer clic en «Ingresar»
 - **Causa:** el `<form>` de `login.component.html` tenía `(ngSubmit)` pero no `[formGroup]="form"`. Los `formControlName` no encontraban el `FormGroupDirective` y Angular lanzaba `RuntimeError` en `checkParentType` durante el render; el botón parecía no hacer nada y no se mostraba ningún mensaje.
 - **Solución:** añadir `[formGroup]="form"` al formulario y crear `login.component.spec.ts` que renderiza el componente y comprueba los valores iniciales y la validación de la contraseña. Las pruebas pasaron de 21 a 23.
+
+## 2026-11-24 — Tasa de mercado, precios en vivo y login
+
+### El API devolvía una tasa BCV falsa (`36`)
+- **Causa:** no existía conector de tasa. `FALLBACK_BCV_RATE=36` se sembraba con `source: 'BCV', isFallback: false`, así que el widget decía «Vigente» y el POS facturaba con un dato inventado.
+- **Solución:** proveedor público `open.er-api.com/v6/latest/USD` con job de 30 min; persistencia como fallback con motivo real y fecha de la fuente; el seeder dejó de presentar su valor como oficial. La tasa confirmada por Finanzas (`verifiedBy`) se preserva.
+
+### Cambiaba la tasa pero los precios VES seguían iguales hasta recargar
+- **Causa:** el backend ya deriva `pricing.price.VES` por respuesta (`serializeProduct`), pero el POS cargaba la tasa una sola vez en `forkJoin` y el widget usaba polling de 5 min sin escuchar `exchangeRate:updated`.
+- **Solución:** `SocketService.rateUpdates` + conexión idempotente desde el shell; el POS recarga el catálogo y llama a `CartStore.refreshProducts()` al cambiar el valor, recalculando totales con `computed`. Widget con polling de 30 min como respaldo.
+
+### Login mostraba las credenciales iniciales en pantalla
+- **Causa:** párrafo con `projects/backend/.env` en `login.component.html`, además de una tarjeta pequeña y sin presencia visual.
+- **Solución:** eliminar el texto, rediseñar con tarjeta centrada, logo, encabezado, iconos en los campos, pie sobrio y soporte dark/móvil. Prueba regresiva que verifica que no aparezcan «credenciales» ni `.env`.
+

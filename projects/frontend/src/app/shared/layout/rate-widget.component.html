@@ -4,19 +4,28 @@
   @if (rate(); as current) {
     <span class="small fw-semibold tabular-nums">{{ formatMoney(current.value, 'VES') }}</span>
 
-    @switch (status()) {
-      @case ('ACTIVE') {
-        <span class="badge text-bg-success-subtle text-success-emphasis">Vigente</span>
-      }
-      @case ('STALE') {
-        <span class="badge text-bg-warning-subtle text-warning-emphasis">Desactualizada</span>
-      }
-      @case ('EXPIRED') {
-        <span class="badge text-bg-danger-subtle text-danger-emphasis">Vencida</span>
+    @if (isFallback()) {
+      <span
+        class="badge text-bg-warning-subtle text-warning-emphasis"
+        [title]="current.reason || 'Tasa de respaldo'"
+      >Respaldo</span>
+    } @else {
+      @switch (status()) {
+        @case ('ACTIVE') {
+          <span class="badge text-bg-success-subtle text-success-emphasis">Vigente</span>
+        }
+        @case ('STALE') {
+          <span class="badge text-bg-warning-subtle text-warning-emphasis">Desactualizada</span>
+        }
+        @case ('EXPIRED') {
+          <span class="badge text-bg-danger-subtle text-danger-emphasis">Vencida</span>
+        }
       }
     }
 
-    <span class="small text-secondary d-none d-md-inline">BCV {{ current.date }}</span>
+    <span class="small text-secondary d-none d-md-inline">
+      {{ isFallback() ? 'Referencia de mercado' : 'BCV' }} {{ current.date }}
+    </span>
   } @else if (error()) {
     <span class="small text-danger"><i class="bi bi-exclamation-triangle me-1"></i>Tasa no disponible</span>
   } @else {

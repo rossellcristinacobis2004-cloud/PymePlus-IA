@@ -13,6 +13,8 @@ const exchangeRateSchema = new mongoose.Schema(
     },
     isFallback: { type: Boolean, default: false },
     reason: { type: String, default: null },
+    // Instante real de actualización informado por el proveedor de mercado.
+    sourceUpdatedAt: { type: Date, default: null },
     verifiedBy: { type: String, default: null }
   },
   { timestamps: true, versionKey: false }

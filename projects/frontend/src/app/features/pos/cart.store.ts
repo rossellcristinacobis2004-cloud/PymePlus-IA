@@ -41,6 +41,18 @@ export class CartStore {
     );
   }
 
+  /** Actualiza el snapshot de producto de cada línea cuando cambia la tasa VES. */
+  refreshProducts(products: Product[]): void {
+    if (products.length === 0) return;
+    const byId = new Map(products.map((product) => [product.id, product]));
+    this.linesSignal.update((lines) =>
+      lines.map((line) => {
+        const fresh = byId.get(line.product.id);
+        return fresh ? { ...line, product: fresh } : line;
+      }),
+    );
+  }
+
   clear(): void {
     this.linesSignal.set([]);
   }

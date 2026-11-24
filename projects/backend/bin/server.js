@@ -21,6 +21,7 @@ import customerRoutes from '../api/customers/customers.routes.js';
 import reportRoutes from '../api/reports/reports.routes.js';
 import exchangeRateRoutes from '../api/exchange-rates/exchange-rate.routes.js';
 import { salesLimiter } from '../middlewares/rate-limit.js';
+import { createMarketRateJob } from '../services/market-rate.job.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -76,6 +77,8 @@ class WebServer {
     this.app.set('trust proxy', resolveTrustProxy());
     this.app.disable('x-powered-by');
 
+    this.marketRateJob = null;
+
     this.database();
     this.middlewares();
     this.routes();
@@ -98,9 +101,18 @@ class WebServer {
 
   /** Conexión opcional a MongoDB; el servidor arranca aunque no haya URI. */
   database() {
-    connectDatabase().catch((error) => {
-      console.error('[DB] Error al conectar MongoDB:', error.message);
-    });
+    connectDatabase()
+      .then(() => this.#startMarketRateJob())
+      .catch((error) => {
+        console.error('[DB] Error al conectar MongoDB:', error.message);
+      });
+  }
+
+  /** Refresco de tasa de mercado: arranca después de la conexión a MongoDB. */
+  #startMarketRateJob() {
+    if (this.marketRateJob) return;
+    this.marketRateJob = createMarketRateJob({ io: this.io });
+    this.marketRateJob.start();
   }
 
   middlewares() {
@@ -311,6 +323,7 @@ class WebServer {
 
   /** Cierra Socket.IO y el servidor HTTP subyacente. */
   close() {
+    this.marketRateJob?.stop();
     return new Promise((resolve) => this.io.close(resolve));
   }
 }

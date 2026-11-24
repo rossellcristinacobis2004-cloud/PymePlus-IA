@@ -14,7 +14,8 @@ API REST + Socket.IO para el sistema POS y de inventario de PymePlus IA.
 ```bash
 npm install
 cp .env.example .env     # Windows: Copy-Item .env.example .env
-# Edita .env: MONGO_URI, JWT_SECRET, FALLBACK_BCV_RATE
+# Edita .env: MONGO_URI, JWT_SECRET, MARKET_RATE_*
+# MARKET_RATE_* consulta exchangerate-api cada 30 min: referencia de mercado, NO tasa BCV oficial (BR-25).
 npm run seed             # crea admin, tasa BCV y datos de prueba
 npm start
 ```
@@ -67,7 +68,8 @@ El servidor escucha en `http://0.0.0.0:3500` por defecto.
 - Todas las respuestas usan el sobre `{ success, message, data, meta, errors }`.
 - Los montos son objetos `Money`: `{ amount, currency, rateUsed }`.
 - `POST /api/sales` exige el header `X-Idempotency-Key` (UUID).
-- USD es la moneda base; VES se deriva de la tasa BCV y se guarda un `rateSnapshot` por venta.
+- USD es la moneda base; VES se deriva de la tasa vigente y se guarda un `rateSnapshot` por venta.
+- `services/market-rate.job.js` consulta `open.er-api.com` al arrancar y cada `MARKET_RATE_INTERVAL_MINUTES` (30 por defecto), emite `exchangeRate:updated` a la sala `authenticated` y guarda el valor como `isFallback: true` con `reason: 'Referencia de mercado (exchangerate-api)'`. Es una excepción aceptada a BR-25: **no** es la tasa oficial del BCV. Una tasa con `verifiedBy` no se sobrescribe. Desactivar con `MARKET_RATE_ENABLED=false` o `NODE_ENV=test`.
 - Cambiar precios (`priceUSD`, `costUSD`, `manualPriceVES`, `promotionPriceUSD`, `pricingMode`, `priceIncludesTax`, `taxType`, `pricing`) requiere rol `ADMIN` (alias entrante `Administrador`). Almacén conserva nombre, stock y lotes.
 - `helpers/pdf-invoice.js` es la fuente única del comprobante: descarga y correo usan el mismo `Buffer` y la escritura en disco es atómica. Se emite `invoice:ready` a la sala `user:<sellerId>` sin exponer la URL, fuera de la transacción.
 - Los PDF se escriben en `var/invoices/` (ignorado por Git) y no son archivos estáticos: `/uploads/documents/*` responde 404 incluso con codificación percentual (`%69`, `%2f`, `%2e%2e`). La única descarga autorizada es `GET /api/sales/:id/invoice.pdf` con JWT.

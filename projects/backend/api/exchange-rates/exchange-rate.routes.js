@@ -18,7 +18,12 @@ router.get('/current', requireAuth, requireRole(...RATE_READ_ROLES), async (_req
   try {
     const rate = await getActiveRate();
     return ok(res, {
-      data: { ...rateSnapshot(rate), ageHours: (Date.now() - new Date(rate.capturedAt).getTime()) / 3_600_000 },
+      data: {
+        ...rateSnapshot(rate),
+        reason: rate.reason || null,
+        sourceUpdatedAt: rate.sourceUpdatedAt || null,
+        ageHours: (Date.now() - new Date(rate.capturedAt).getTime()) / 3_600_000
+      },
       message: 'Tasa BCV vigente obtenida.'
     });
   } catch (error) {
@@ -113,7 +118,11 @@ router.post('/', requireAuth, requireRole('ADMIN', 'FINANCE'), async (req, res, 
     const io = req.app.get('io');
     if (io && status === 'ACTIVE' && source === 'BCV') {
       // Solo sockets con JWT pertenecen a la sala autenticada.
-      io.to('authenticated').emit('exchangeRate:updated', rateSnapshot(doc));
+      io.to('authenticated').emit('exchangeRate:updated', {
+        ...rateSnapshot(doc),
+        reason: doc.reason || null,
+        sourceUpdatedAt: doc.sourceUpdatedAt || null
+      });
     }
 
     return created(res, doc, 'Tasa BCV registrada correctamente.');

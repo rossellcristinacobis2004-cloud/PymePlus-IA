@@ -1,9 +1,10 @@
 import { DOCUMENT } from '@angular/common';
-import { Component, computed, effect, inject, signal } from '@angular/core';
+import { Component, computed, effect, inject, OnDestroy, signal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 
 import { AuthService } from '../../core/services/auth.service';
 import { TokenService } from '../../core/services/token.service';
+import { SocketService } from '../../core/services/socket.service';
 import { RateWidgetComponent } from './rate-widget.component';
 
 type Theme = 'light' | 'dark';
@@ -15,9 +16,10 @@ type Theme = 'light' | 'dark';
   templateUrl: './shell.component.html',
   styleUrl: './shell.component.scss',
 })
-export class ShellComponent {
+export class ShellComponent implements OnDestroy {
   private readonly auth = inject(AuthService);
   private readonly tokens = inject(TokenService);
+  private readonly socket = inject(SocketService);
   private readonly document = inject(DOCUMENT);
 
   readonly user = this.tokens.user;
@@ -33,6 +35,14 @@ export class ShellComponent {
     this.document.documentElement.setAttribute('data-bs-theme', theme);
     localStorage.setItem('pymeplus.theme', theme);
   });
+
+  constructor() {
+    if (this.tokens.isAuthenticated()) this.socket.connect();
+  }
+
+  ngOnDestroy(): void {
+    this.socket.disconnect();
+  }
 
   toggleTheme(): void {
     this.theme.update((current) => (current === 'light' ? 'dark' : 'light'));

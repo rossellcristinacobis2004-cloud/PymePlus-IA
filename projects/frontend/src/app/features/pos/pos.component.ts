@@ -89,6 +89,7 @@ export class PosComponent {
     this.socket.invoiceReady.pipe(takeUntilDestroyed()).subscribe((event) => {
       this.toasts.info(`Factura ${event.invoiceNumber} lista para descargar.`);
     });
+    this.socket.rateUpdates.pipe(takeUntilDestroyed()).subscribe((rate) => this.applyRateUpdate(rate));
   }
 
   onSearchInput(value: string): void {
@@ -250,6 +251,32 @@ export class PosComponent {
     this.lastSale.set(null);
     this.search.set('');
     this.syncPaidToTotal();
+  }
+
+  /** La tasa cambia en el backend: se recalculan totales y precios VES sin recargar la SPA. */
+  private applyRateUpdate(rate: RateSnapshot): void {
+    const previous = this.rate()?.value;
+    this.rate.set(rate);
+    this.syncPaidToTotal();
+
+    if (previous === undefined || Number(previous) === Number(rate.value)) return;
+
+    this.reloadPrices();
+    this.toasts.info(`Tasa actualizada a ${this.formatMoney(rate.value, 'VES')}. Precios recalculados.`);
+  }
+
+  private reloadPrices(): void {
+    this.api.get<Product[]>('/products?limit=100&active=true').subscribe({
+      next: (products) => {
+        this.products.set(products);
+        this.cart.refreshProducts(products);
+        this.syncPaidToTotal();
+      },
+      error: (error: unknown) => {
+        const apiError = toApiError(error);
+        this.toasts.error(apiError.userMessage, apiError.suggestion);
+      },
+    });
   }
 
   private loadCatalog(): void {

@@ -6,4 +6,6 @@ export interface RateSnapshot {
   isFallback: boolean;
   status?: string;
   ageHours?: number;
+  reason?: string | null;
+  sourceUpdatedAt?: string | null;
 }

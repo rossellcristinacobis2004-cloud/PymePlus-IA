@@ -39,14 +39,14 @@ async function seed() {
       $set: {
         value: BCV_RATE,
         status: 'ACTIVE',
-        isFallback: false,
+        isFallback: true,
         capturedAt: new Date(),
-        reason: 'Carga inicial del seeder'
+        reason: 'Referencia inicial del seeder (pendiente de confirmación BCV)'
       }
     },
     { upsert: true }
   );
-  console.log(`[SEED] Tasa BCV: ${BCV_RATE}`);
+  console.log(`[SEED] Tasa de respaldo: ${BCV_RATE} (el job de mercado la actualizará al arrancar).`);
 
   const products = [
     {

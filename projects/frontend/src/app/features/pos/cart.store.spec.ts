@@ -48,6 +48,27 @@ describe('CartStore', () => {
     expect(cart.lines()[1].discountPercent).toBe(15);
   });
 
+  it('refresca el precio VES del carrito cuando cambia la tasa', () => {
+    const cart = new CartStore();
+    cart.add(product, 'LOTE-1');
+
+    const updated: Product = {
+      ...product,
+      pricing: {
+        ...product.pricing,
+        price: {
+          ...product.pricing.price,
+          VES: { ...product.pricing.price.VES, amount: 5977 },
+        },
+      },
+    };
+    cart.refreshProducts([updated]);
+
+    expect(cart.lines()[0].product.pricing.price.VES.amount).toBe(5977);
+    expect(cart.lines()[0].quantity).toBe(1);
+    expect(cart.lines()[0].lot).toBe('LOTE-1');
+  });
+
   it('elimina líneas y limpia el carrito', () => {
     const cart = new CartStore();
     cart.add(product);
