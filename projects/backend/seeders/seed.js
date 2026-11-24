@@ -77,7 +77,7 @@ async function seed() {
     if (!exists) {
       await Product.create({
         ...item,
-        category: { name: item.sku.startsWith('FER') ? 'Ferretería' : 'Abarrotes', defaultTax: 'IVA_GENERAL' },
+        category: item.sku.startsWith('FER') ? 'Ferretería' : 'Abarrotes',
         audit: { createdBy: admin.id, updatedBy: admin.id }
       });
       console.log(`[SEED] Producto creado: ${item.name}`);

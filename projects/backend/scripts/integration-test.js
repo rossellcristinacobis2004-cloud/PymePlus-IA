@@ -13,6 +13,7 @@ process.env.MONGO_URI = replSet.getUri();
 const { default: WebServer } = await import('../bin/server.js');
 const { default: User } = await import('../api/auth/user.model.js');
 const { default: Product } = await import('../api/products/product.model.js');
+const { default: Customer } = await import('../api/customers/customer.model.js');
 
 const server = new WebServer();
 server.listen();
@@ -65,6 +66,15 @@ try {
   });
   check('login devuelve JWT', login.status === 200 && Boolean(login.body.data.token), JSON.stringify(login.body.errors));
   const token = login.body.data.token;
+  check('login entrega refresh token', Boolean(login.body.data.refreshToken));
+
+  // Captura de eventos Socket.IO sin depender de un cliente externo.
+  const emitted = [];
+  const originalEmit = server.io.emit.bind(server.io);
+  server.io.emit = (event, payload) => {
+    emitted.push({ event, payload });
+    return originalEmit(event, payload);
+  };
 
   const product = await request('/api/products', {
     method: 'POST',
@@ -82,6 +92,17 @@ try {
   check('crear producto', product.status === 201, JSON.stringify(product.body.errors));
   const productId = product.body.data.id;
   check('precio VES derivado de BCV', product.body.data.pricing.price.VES.amount === 360);
+  check(
+    'campos públicos de producto',
+    product.body.data.sku === 'INT-000001' &&
+      product.body.data.category === 'General' &&
+      product.body.data.costUSD === 6 &&
+      product.body.data.priceUSD === 10 &&
+      product.body.data.stockCurrent === 10 &&
+      product.body.data.stockMinimum === 3 &&
+      product.body.data.isActive === true,
+    JSON.stringify(product.body.data)
+  );
 
   const saleBody = {
     currency: 'USD',
@@ -99,6 +120,25 @@ try {
   check('IVA calculado por línea', sale.body.data.totals.iva.amount === 3.2, JSON.stringify(sale.body.data.totals));
   check('total correcto', sale.body.data.totals.total.amount === 23.2);
   check('stock descontado', sale.body.data.items[0].stockAfter === 8);
+  check(
+    'campos públicos de factura',
+    sale.body.data.invoiceNumber?.startsWith('FAC') &&
+      sale.body.data.totalUSD === 23.2 &&
+      sale.body.data.totalVES === 835.2 &&
+      sale.body.data.exchangeRate === 36 &&
+      sale.body.data.paymentMethod === 'Efectivo USD' &&
+      sale.body.data.items[0].priceUSD === 10 &&
+      sale.body.data.items[0].subtotalUSD === 20,
+    JSON.stringify(sale.body.data)
+  );
+  check(
+    'ambos eventos de stock con el mismo payload',
+    emitted.some((e) => e.event === 'stock_updated') &&
+      emitted.some((e) => e.event === 'stock:updated') &&
+      JSON.stringify(emitted.find((e) => e.event === 'stock_updated').payload) ===
+        JSON.stringify(emitted.find((e) => e.event === 'stock:updated').payload),
+    JSON.stringify(emitted.map((e) => e.event))
+  );
 
   const retry = await request('/api/sales', {
     method: 'POST',
@@ -130,6 +170,94 @@ try {
 
   const customers = await request('/api/customers', { token });
   check('listado de clientes responde', customers.status === 200);
+
+  // Ventana de facturación con el contrato nuevo y reenvío de correo.
+  const invoiceSale = await request('/api/sales', {
+    method: 'POST',
+    token,
+    body: {
+      currency: 'USD',
+      customerRUT: 'J-12345678-9',
+      customerEmail: 'factura@test.local',
+      paymentMethod: 'Punto de Venta',
+      items: [{ productId, quantity: 1 }]
+    },
+    headers: { 'X-Idempotency-Key': '22222222-2222-4222-8222-222222222222' }
+  });
+  check(
+    'venta con paymentMethod y customerRUT',
+    invoiceSale.status === 201 &&
+      invoiceSale.body.data.paymentMethod === 'Punto de Venta' &&
+      invoiceSale.body.data.customerRUT === 'J-12345678-9',
+    JSON.stringify(invoiceSale.body)
+  );
+
+  const resend = await request(`/api/sales/${invoiceSale.body.data.id}/resend-invoice`, {
+    method: 'POST',
+    token,
+    body: {}
+  });
+  check(
+    'reenvío de factura encola sin webhook',
+    resend.status === 202 && resend.body.data.queued === true && resend.body.data.sent === false,
+    JSON.stringify(resend.body)
+  );
+
+  // Tasa BCV: carga manual, historial y vigencia.
+  const rateDate = new Date(Date.now() - 4 * 3_600_000).toISOString().slice(0, 10);
+  const ratePost = await request('/api/exchange-rates', {
+    method: 'POST',
+    token,
+    body: { date: rateDate, value: 40, source: 'BCV', reason: 'Prueba de integración' }
+  });
+  check('cargar tasa BCV', ratePost.status === 201, JSON.stringify(ratePost.body));
+
+  const currentRate = await request('/api/exchange-rates/current', { token });
+  check(
+    'tasa vigente refleja la carga manual',
+    currentRate.status === 200 && currentRate.body.data.value === 40 && currentRate.body.data.isFallback === false,
+    JSON.stringify(currentRate.body)
+  );
+
+  const history = await request('/api/exchange-rates/history', { token });
+  check('historial de tasas', history.status === 200 && history.body.data.length >= 1);
+
+  // Saldo de crédito real en anulación.
+  const creditCustomer = await Customer.create({
+    name: 'Cliente Crédito',
+    documentType: 'RIF',
+    documentNumber: 'J-87654321-0',
+    email: 'credito@test.local',
+    credit: { enabled: true, limitUSD: 100, balanceUSD: 0 }
+  });
+  const creditSale = await request('/api/sales', {
+    method: 'POST',
+    token,
+    body: {
+      currency: 'USD',
+      customerId: String(creditCustomer._id),
+      payment: { method: 'CREDIT' },
+      items: [{ productId, quantity: 1 }]
+    },
+    headers: { 'X-Idempotency-Key': '33333333-3333-4333-8333-333333333333' }
+  });
+  check('venta a crédito', creditSale.status === 201, JSON.stringify(creditSale.body));
+  check(
+    'saldo de crédito aumenta',
+    (await Customer.findById(creditCustomer._id)).credit.balanceUSD === 11.6
+  );
+
+  const creditVoid = await request(`/api/sales/${creditSale.body.data.id}/void`, {
+    method: 'POST',
+    token,
+    body: { reason: 'Anulación de prueba de crédito' }
+  });
+  check('anular venta a crédito', creditVoid.status === 200, JSON.stringify(creditVoid.body));
+  check(
+    'anulación descuenta el saldo real de crédito',
+    (await Customer.findById(creditCustomer._id)).credit.balanceUSD === 0,
+    `saldo=${(await Customer.findById(creditCustomer._id)).credit.balanceUSD}`
+  );
 
   console.log(`\nINTEGRATION OK (${passed} verificaciones)`);
   process.exitCode = 0;

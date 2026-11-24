@@ -1,0 +1,11 @@
+services:
+  api:
+    build: .
+    ports:
+      - "${PORT:-3500}:3500"
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs

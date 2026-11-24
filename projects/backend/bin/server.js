@@ -16,6 +16,8 @@ import productRoutes from '../api/products/products.routes.js';
 import saleRoutes from '../api/sales/sales.routes.js';
 import customerRoutes from '../api/customers/customers.routes.js';
 import reportRoutes from '../api/reports/reports.routes.js';
+import exchangeRateRoutes from '../api/exchange-rates/exchange-rate.routes.js';
+import { salesLimiter } from '../middlewares/rate-limit.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -107,9 +109,10 @@ class WebServer {
     // Enrutadores del dominio.
     this.app.use('/api/auth', authRoutes);
     this.app.use('/api/products', productRoutes);
-    this.app.use('/api/sales', saleRoutes);
+    this.app.use('/api/sales', salesLimiter, saleRoutes);
     this.app.use('/api/customers', customerRoutes);
     this.app.use('/api/reports', reportRoutes);
+    this.app.use('/api/exchange-rates', exchangeRateRoutes);
 
     this.io.on('connection', (socket) => {
       console.log(`[SOCKET] Cliente conectado: ${socket.id}`);

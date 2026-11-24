@@ -61,3 +61,15 @@
 **Decisión:** Crear `package.json` con `"type": "module"` y dependencias exactas pedidas (express 5.3, mongoose 9.13, dotenv 18, cors 2.8, helmet 8.3, jsonwebtoken 9, bcryptjs 3, express-fileupload 1.6, socket.io 4.8). Adaptar `bin/server.js` con healthcheck `/api/health`, 404 JSON para `/api`, manejador global de errores legibles, límite de 10 MB y `os.tmpdir()` para compatibilidad Windows. `index.js` carga `.env` primero y gestiona cierre graceful.
 
 **Consecuencias:** El servidor arranca sin MongoDB definido (modo degradado con advertencia). La ruta SPA `/*path` usa sintaxis Express 5. Falta implementar los enrutadores de dominio y la conexión obligatoria a MongoDB en producción.
+
+---
+
+## ADR-006 — 2026-11-23: Campos públicos aditivos y eventos de stock duales
+
+**Estado:** Aceptada
+
+**Contexto:** El contrato solicitado para producto (`sku`, `category`, `costUSD`, `priceUSD`, `stockCurrent`, `stockMinimum`, `imageUrl`, `isActive`) y facturación (`invoiceNumber`, `customerRUT`, `totalUSD`, `totalVES`, `exchangeRate`, `paymentMethod`) difería del storage histórico anidado. Además, el frontend ya escuchaba `stock:updated`.
+
+**Decisión:** Exponer los campos nuevos como virtuales/alias calculados sobre `pricing`, `stock`, `flags`, `totals` e `invoice` (una sola fuente de verdad). Categoría migrada a `String` con enum acotado mediante script no destructivo. Emitir simultáneamente `stock_updated` y `stock:updated` con idéntico payload. Correo con webhook si `MAIL_WEBHOOK_URL` existe; si no, encolar en `microservices/outbox/` sin afirmar envío. Tasa BCV se carga manualmente desde `/api/exchange-rates` con snapshot por venta; sin scraper externo.
+
+**Consecuencias:** Los clientes actuales siguen funcionando sin cambios; los nuevos reciben ambos formatos. La bandera `queued/sent` distingue correo encolado de correo realmente enviado. Se agregaron rate limit en login/ventas, refresh token, recuperación de contraseña, Docker y GitHub Actions.
