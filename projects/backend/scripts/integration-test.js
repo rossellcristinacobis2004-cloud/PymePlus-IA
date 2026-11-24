@@ -352,6 +352,85 @@ try {
     inactive.status === 200 && inactive.body.data.some((item) => item.id === catalogId)
   );
 
+  // Comprobante PDF: misma fuente para descarga y correo.
+  const pdfResponse = await fetch(`${base}/api/sales/${invoiceSale.body.data.id}/invoice.pdf`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  const pdfBuffer = Buffer.from(await pdfResponse.arrayBuffer());
+  const expectedPdfName = `FAC-${String(invoiceSale.body.data.number).replace(/^VTA-/, '')}.pdf`;
+  check(
+    'descarga del comprobante PDF',
+    pdfResponse.status === 200 &&
+      pdfResponse.headers.get('content-type')?.includes('application/pdf') &&
+      pdfResponse.headers.get('content-disposition')?.includes(expectedPdfName) &&
+      pdfBuffer.subarray(0, 8).toString() === '%PDF-1.4' &&
+      pdfBuffer.toString('latin1').includes('Factura FAC-'),
+    `status=${pdfResponse.status} contenido=${pdfResponse.headers.get('content-type')}`
+  );
+  check(
+    'evento invoice:ready emitido',
+    emitted.some((event) => event.event === 'invoice:ready'),
+    JSON.stringify([...new Set(emitted.map((event) => event.event))])
+  );
+
+  // Autorización de precios por rol.
+  await User.create({
+    name: 'Almacén Prueba',
+    email: 'warehouse@test.local',
+    password: 'Admin12345',
+    role: 'WAREHOUSE'
+  });
+  const warehouseLogin = await request('/api/auth/login', {
+    method: 'POST',
+    body: { email: 'warehouse@test.local', password: 'Admin12345' }
+  });
+  const warehouseToken = warehouseLogin.body.data.token;
+  check('login de almacén', warehouseLogin.status === 200 && Boolean(warehouseToken));
+
+  const warehouseRename = await request(`/api/products/${productId}`, {
+    method: 'PATCH',
+    token: warehouseToken,
+    body: { name: 'Nombre editado por almacén' }
+  });
+  check(
+    'almacén edita datos no monetarios',
+    warehouseRename.status === 200,
+    JSON.stringify(warehouseRename.body)
+  );
+
+  const warehousePrice = await request(`/api/products/${productId}`, {
+    method: 'PATCH',
+    token: warehouseToken,
+    body: { priceUSD: 99 }
+  });
+  check(
+    'almacén no puede modificar precios',
+    warehousePrice.status === 403 && warehousePrice.body.errors[0].code === 'FORBIDDEN',
+    JSON.stringify(warehousePrice.body)
+  );
+
+  const warehouseCreate = await request('/api/products', {
+    method: 'POST',
+    token: warehouseToken,
+    body: { sku: 'INT-000003', name: 'Producto de almacén', priceUSD: 5 }
+  });
+  check(
+    'almacén no puede crear productos con precio',
+    warehouseCreate.status === 403,
+    JSON.stringify(warehouseCreate.body)
+  );
+
+  const adminPrice = await request(`/api/products/${productId}`, {
+    method: 'PATCH',
+    token,
+    body: { priceUSD: 10 }
+  });
+  check(
+    'administrador sí puede modificar precios',
+    adminPrice.status === 200 && adminPrice.body.data.priceUSD === 10,
+    JSON.stringify(adminPrice.body)
+  );
+
   console.log(`\nINTEGRATION OK (${passed} verificaciones)`);
   process.exitCode = 0;
 } catch (error) {

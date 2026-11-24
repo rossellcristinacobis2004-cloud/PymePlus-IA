@@ -17,7 +17,7 @@ import { parseCustomerRUT } from '../../helpers/validators.js';
 import { getActiveRate, assertCurrencyAllowed, snapshot } from '../../services/exchange-rate.service.js';
 import { decrementStock, increaseStock, nextSequence } from '../../services/inventory.service.js';
 import { serializeSale } from '../../helpers/serializers.js';
-import { invoicePdf } from '../../helpers/pdf.js';
+import { generateInvoicePdf, invoiceFileName } from '../../helpers/pdf-invoice.js';
 import { sendInvoice } from '../../microservices/email.connector.js';
 
 const INVOICE_DIR = path.resolve(process.cwd(), 'uploads/documents/invoices');
@@ -25,14 +25,11 @@ const VOID_WINDOW_HOURS = Number(process.env.VOID_WINDOW_HOURS || 24);
 
 async function ensureInvoiceFile(sale) {
   await fs.mkdir(INVOICE_DIR, { recursive: true });
-  const fileName = `${String(sale.number).replace(/^VTA/, 'FAC')}.pdf`;
+  const fileName = invoiceFileName(sale);
   const filePath = path.join(INVOICE_DIR, fileName);
 
-  try {
-    await fs.access(filePath);
-  } catch {
-    await fs.writeFile(filePath, invoicePdf(sale));
-  }
+  // Se regenera siempre para que cambios de plantilla no dejen PDFs obsoletos.
+  await fs.writeFile(filePath, generateInvoicePdf(sale));
 
   return { fileName, filePath, relativeUrl: `/uploads/documents/invoices/${fileName}` };
 }
@@ -348,6 +345,11 @@ export async function createSale(req, res, next) {
         issuedAt: nowIso()
       };
       await Sale.updateOne({ _id: saleDoc._id }, { $set: { invoice: saleDoc.invoice } });
+      req.app.get('io')?.emit('invoice:ready', {
+        saleId: String(saleDoc._id),
+        invoiceNumber: saleDoc.invoice.number,
+        pdfUrl: saleDoc.invoice.pdfUrl
+      });
     } catch (error) {
       console.error('[INVOICE] No se pudo generar el PDF:', error.message);
     }

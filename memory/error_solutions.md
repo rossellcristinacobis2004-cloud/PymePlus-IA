@@ -61,3 +61,33 @@ Registro de errores y parches aplicados.
 ### Refresh token almacenado en texto plano
 - **Causa:** la primera versión del endpoint `/api/auth/refresh` emitía un JWT sin persistencia ni hash.
 - **Solución:** modelo `RefreshToken` con `tokenHash` SHA-256, `expiresAt` y `revokedAt`; rotación en cada renovación y verificación del hash antes de aceptar el token.
+
+## 2026-11-23 — Comprobante PDF y autorización de precios
+
+### Factura con `IVA (16%)` fijo y número `VTA-...`
+- **Causa:** `invoicePdf()` en `helpers/pdf.js` hardcodeaba la alícuota y usaba el número interno de venta.
+- **Solución:** helper dedicado `helpers/pdf-invoice.js` con `FAC-...`, `item.tax.rate` real (0 % en exentos) y leyenda de fallback; `sale.controller.js` usa el nuevo helper para descarga y correo.
+
+### Comprobantes truncados a 55 líneas
+- **Causa:** `createSimplePdf()` hacía `lines.slice(0, 55)` y emitía una sola página.
+- **Solución:** paginación real con tantos objetos `/Page` y `/Contents` como hagan falta, recalculando `xref` y `/Count`. Cubierto con una venta de 80 líneas.
+
+### Cambios de plantilla no se reflejaban en PDFs ya generados
+- **Causa:** `ensureInvoiceFile()` solo escribía el archivo si no existía (`fs.access`).
+- **Solución:** `fs.writeFile` incondicional (`force: true`) y emisión de `invoice:ready` tras el commit.
+
+### `WAREHOUSE` podía fijar precios
+- **Causa:** `PATCH /api/products/:id` solo usaba `requireRole('ADMIN', 'WAREHOUSE')` y el controlador no distinguía campos monetarios; `POST` permitía crear con `priceUSD`.
+- **Solución:** `requirePricePermission` inspecciona el body (incluida forma anidada `pricing`) y exige `ADMIN`/`Administrador`; `POST` usa `requireAdmin`.
+
+### `forbidden()` sobrescribía el `userMessage` personalizado
+- **Causa:** la fábrica pasaba siempre su propio `userMessage` en las opciones, ignorando el mensaje legible del middleware.
+- **Solución:** aceptar un segundo argumento `options` y combinarlo con los valores por defecto.
+
+### Smoke test devolvía 500 en la ruta sin autenticación
+- **Causa:** la validación de `JWT_SECRET` se ejecutaba antes de comprobar la presencia del header `Bearer`, por lo que una petición sin token resultaba en `INTERNAL_ERROR` en vez de `401`.
+- **Solución:** validar primero que exista `scheme === bearer` y token; solo entonces verificar `JWT_SECRET`. Así, sin credenciales → 401 y con token pero sin secreto → 500. Probado en `test:smoke` (6/6) y en unitarias.
+
+### `npm test` fallaba al comparar un `Buffer` con una cadena
+- **Causa:** `assert.equal(buffer.subarray(0, 8), '%PDF-1.4')` comparaba tipos distintos.
+- **Solución:** convertir el subarray con `.toString()` antes de comparar.

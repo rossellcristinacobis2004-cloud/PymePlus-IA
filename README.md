@@ -9,7 +9,7 @@ API REST y Socket.IO para la gestión de ventas, inventario y clientes de peque�
 ![Express](https://img.shields.io/badge/Express-5.3-000000?logo=express&logoColor=white)
 ![Mongoose](https://img.shields.io/badge/Mongoose-9.13-47A248?logo=mongodb&logoColor=white)
 ![Socket.IO](https://img.shields.io/badge/Socket.IO-4.8-010E2C?logo=socketdotio&logoColor=white)
-![Verificaciones](https://img.shields.io/badge/verificaciones-62%2F62%20OK-brightgreen)
+![Verificaciones](https://img.shields.io/badge/verificaciones-80%2F80%20OK-brightgreen)
 
 [Repositorio](https://github.com/rossellcristinacobis2004-cloud/PymePlus-IA) · [Documentación funcional](context/system_context.md)
 
@@ -62,7 +62,7 @@ npm run test:smoke
 npm run test:integration
 ```
 
-Resultados: 19 pruebas unitarias, 6 comprobaciones HTTP y 37 verificaciones de integración, todas correctas.
+Resultados: 30 pruebas unitarias, 6 comprobaciones HTTP y 44 verificaciones de integración, todas correctas.
 
 ## Enlaces
 

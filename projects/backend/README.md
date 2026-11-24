@@ -41,11 +41,11 @@ El servidor escucha en `http://0.0.0.0:3500` por defecto.
 | POST | `/api/auth/forgot-password` | Solicitud de restablecimiento de contraseña |
 | POST | `/api/auth/reset-password` | Restablecimiento con token de un solo uso |
 | GET | `/api/auth/me` | Usuario autenticado |
-| GET/POST | `/api/products` | Listado / creación |
+| GET/POST | `/api/products` | Listado / creación (crear solo `ADMIN`) |
 | GET | `/api/products/barcode/:barcode` | Búsqueda por escáner |
 | GET | `/api/products/low-stock` | Stock bajo |
 | GET | `/api/products/expiring?days=30` | Próximos a vencer |
-| PATCH/DELETE | `/api/products/:id` | Actualización / baja lógica |
+| PATCH/DELETE | `/api/products/:id` | Actualización (campos de precio solo `ADMIN`) / baja lógica |
 | POST | `/api/products/:id/stock-adjustments` | Ajuste auditado |
 | GET/POST | `/api/sales` | Listado / registro atómico |
 | POST | `/api/sales/:id/void` | Anulación con reversión |
@@ -53,7 +53,7 @@ El servidor escucha en `http://0.0.0.0:3500` por defecto.
 | GET | `/api/exchange-rates/current` | Tasa BCV vigente o fallback marcado |
 | GET | `/api/exchange-rates/history` | Historial paginado de tasas |
 | POST | `/api/exchange-rates` | Alta manual de tasa (ADMIN o FINANCE) |
-| GET | `/api/sales/:id/invoice.pdf` | Factura PDF |
+| GET | `/api/sales/:id/invoice.pdf` | Factura PDF (`helpers/pdf-invoice.js`) |
 | GET/POST | `/api/customers` | Clientes |
 | GET | `/api/customers/:id/statement` | Estado de cuenta |
 | GET | `/api/reports/{sales,iva,inventory-valuation,profitability,replenishment}` | Reportes |
@@ -65,6 +65,9 @@ El servidor escucha en `http://0.0.0.0:3500` por defecto.
 - Los montos son objetos `Money`: `{ amount, currency, rateUsed }`.
 - `POST /api/sales` exige el header `X-Idempotency-Key` (UUID).
 - USD es la moneda base; VES se deriva de la tasa BCV y se guarda un `rateSnapshot` por venta.
+- Cambiar precios (`priceUSD`, `costUSD`, `manualPriceVES`, `promotionPriceUSD`, `pricingMode`, `priceIncludesTax`, `taxType`, `pricing`) requiere rol `ADMIN` (alias entrante `Administrador`). Almacén conserva nombre, stock y lotes.
+- `helpers/pdf-invoice.js` es la fuente única del comprobante: descarga y correo usan el mismo `Buffer`. Se emite `invoice:ready` tras generarlo, fuera de la transacción.
+- `middlewares/auth.middleware.js` es la autorización canónica; `middlewares/auth.js` solo re-exporta por compatibilidad.
 - El detalle está en `/context/api_contracts.md` y `/context/business_rules.md`.
 
 ## Despliegue

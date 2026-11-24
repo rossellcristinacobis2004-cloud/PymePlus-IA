@@ -21,10 +21,11 @@ export const unauthorized = (message = 'Credenciales inválidas.') =>
     suggestion: 'Ingresa con tu usuario y contraseña.'
   });
 
-export const forbidden = (message = 'No tienes permiso para esta acción.') =>
+export const forbidden = (message = 'No tienes permiso para esta acción.', options = {}) =>
   new ApiError(403, 'FORBIDDEN', message, {
     userMessage: 'Tu usuario no tiene permiso para realizar esta acción.',
-    suggestion: 'Solicita permisos a un administrador.'
+    suggestion: 'Solicita permisos a un administrador.',
+    ...options
   });
 
 export const notFound = (resource = 'Recurso') =>

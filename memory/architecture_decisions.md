@@ -73,3 +73,15 @@
 **Decisión:** Exponer los campos nuevos como virtuales/alias calculados sobre `pricing`, `stock`, `flags`, `totals` e `invoice` (una sola fuente de verdad). Categoría migrada a `String` con enum acotado mediante script no destructivo. Emitir simultáneamente `stock_updated` y `stock:updated` con idéntico payload. Correo con webhook si `MAIL_WEBHOOK_URL` existe; si no, encolar en `microservices/outbox/` sin afirmar envío. Tasa BCV se carga manualmente desde `/api/exchange-rates` con snapshot por venta; sin scraper externo.
 
 **Consecuencias:** Los clientes actuales siguen funcionando sin cambios; los nuevos reciben ambos formatos. La bandera `queued/sent` distingue correo encolado de correo realmente enviado. Se agregaron rate limit en login/ventas, refresh token, recuperación de contraseña, Docker y GitHub Actions.
+
+---
+
+## ADR-007 — 2026-11-23: Comprobante PDF canónico y autorización de precios por rol
+
+**Estado:** Aceptada
+
+**Contexto:** `helpers/pdf.js` mezclaba el constructor PDF con la factura, mostraba `VTA-...` en vez de `FAC-...`, escribía `IVA (16%)` fijo, truncaba a 55 líneas y no regeneraba archivos existentes. `invoice:ready` estaba en el contrato pero nunca se emitía. Por otro lado, `PATCH /api/products/:id` permitía a `WAREHOUSE` cambiar `priceUSD` y `POST /api/products` le permitía fijar precio al crear.
+
+**Decisión:** Crear `helpers/pdf-invoice.js` como única fuente del comprobante (`generateInvoicePdf`, `invoiceFileName`, `invoicePdf`), con número `FAC`, alícuota real por línea, RUT, método de pago, control, tasa BCV con fecha/fuente y leyenda de fallback; `createSimplePdf` pasa a paginar automáticamente. `ensureInvoiceFile()` regenera siempre el PDF y emite `invoice:ready` fuera de la transacción. Crear `middlewares/auth.middleware.js` como implementación canónica (`requireAuth`, `requireRole`, `requireAdmin`, `requirePricePermission`), dejando `auth.js` como re-export. `POST /api/products` queda solo para `ADMIN` porque la creación exige `priceUSD`; `PATCH` filtra por campos de precio y preserva edición no monetaria para almacén. `ADMIN` sigue siendo el valor persistido; `Administrador` se acepta solo como alias entrante, sin migración de MongoDB.
+
+**Consecuencias:** No se duplica lógica JWT ni se migran roles. Un token de refresh no sirve como access token. Los cambios de plantilla se reflejan de inmediato porque el PDF se regenera. La tasa BCV sigue siendo competencia de `ADMIN`/`FINANCE`: no es precio de producto y no se tocó esa regla.

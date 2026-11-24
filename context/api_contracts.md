@@ -142,8 +142,8 @@ Copia inmutable de la tasa vigente al momento de la operación. Debe persistirse
 | GET | `/api/products` | Lista paginada y filtrable |
 | GET | `/api/products/:id` | Detalle de producto |
 | GET | `/api/products/barcode/:barcode` | Búsqueda exacta para POS/escáner |
-| POST | `/api/products` | Crear producto (roles `ADMIN`, `WAREHOUSE`) |
-| PATCH | `/api/products/:id` | Actualizar producto |
+| POST | `/api/products` | Crear producto (solo rol `ADMIN` / Administrador; la creación fija `priceUSD`) |
+| PATCH | `/api/products/:id` | Actualizar producto (campos de `pricing` solo rol `ADMIN`; almacén puede editar datos no monetarios) |
 | DELETE | `/api/products/:id` | Baja lógica (`active=false`) |
 | GET | `/api/products/low-stock` | Productos bajo mínimo |
 | GET | `/api/products/expiring?days=30` | Lotes próximos a vencer |
@@ -208,6 +208,8 @@ Copia inmutable de la tasa vigente al momento de la operación. Debe persistirse
 ```
 
 > `stock.status`: `OUT_OF_STOCK` | `LOW` | `NORMAL` | `OVERSTOCK`.
+
+> **Autorización de precios:** los campos `priceUSD`, `costUSD`, `manualPriceVES`, `promotionPriceUSD`, `pricingMode`, `priceIncludesTax`, `taxType` y `pricing` solo pueden modificarse con el rol `ADMIN` (alias entrante: `Administrador`). Otros roles pueden actualizar nombre, descripción, categoría, stock, lotes y código de barras.
 
 ### 3.3 Ejemplo: `POST /api/products`
 

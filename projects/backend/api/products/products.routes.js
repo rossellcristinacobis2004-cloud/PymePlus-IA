@@ -1,5 +1,10 @@
 import { Router } from 'express';
-import { requireAuth, requireRole } from '../../middlewares/auth.js';
+import {
+  requireAuth,
+  requireRole,
+  requireAdmin,
+  requirePricePermission
+} from '../../middlewares/auth.middleware.js';
 import * as controller from './product.controller.js';
 
 const router = Router();
@@ -12,8 +17,8 @@ router.get('/barcode/:barcode', requireAuth, controller.getByBarcode);
 router.get('/sku/:sku', requireAuth, controller.getBySku);
 router.get('/:id', requireAuth, controller.getById);
 
-router.post('/', requireAuth, requireRole('ADMIN', 'WAREHOUSE'), controller.create);
-router.patch('/:id', requireAuth, requireRole('ADMIN', 'WAREHOUSE'), controller.update);
+router.post('/', requireAuth, requireAdmin, controller.create);
+router.patch('/:id', requireAuth, requirePricePermission, controller.update);
 router.delete('/:id', requireAuth, requireRole('ADMIN'), controller.remove);
 router.post('/:id/stock-adjustments', requireAuth, requireRole('ADMIN', 'WAREHOUSE'), controller.adjustStock);
 
