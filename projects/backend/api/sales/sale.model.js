@@ -1,4 +1,6 @@
 import mongoose from 'mongoose';
+import { PAYMENT_METHODS } from '../../helpers/payment.js';
+import { parseCustomerRUT } from '../../helpers/validators.js';
 
 const moneySchema = new mongoose.Schema(
   {
@@ -28,11 +30,38 @@ const saleItemSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// Campos planos solicitados por el contrato de facturación.
+saleItemSchema.virtual('priceUSD').get(function getPriceUSD() {
+  return this.unitPrice?.amount ?? 0;
+});
+saleItemSchema.virtual('subtotalUSD').get(function getSubtotalUSD() {
+  return this.subtotal?.amount ?? 0;
+});
+
 const saleSchema = new mongoose.Schema(
   {
     number: { type: String, required: true, unique: true },
     status: { type: String, enum: ['COMPLETED', 'VOID'], default: 'COMPLETED' },
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', default: null },
+    customerRUT: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+      validate: {
+        validator(value) {
+          if (!value) return true;
+          try {
+            parseCustomerRUT(value);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        message: 'customerRUT debe ser un RIF, cédula o pasaporte válido.'
+      }
+    },
+    paymentMethod: { type: String, enum: PAYMENT_METHODS, default: null },
     customerSnapshot: { type: Object, default: null },
     items: { type: [saleItemSchema], default: [] },
     totals: {
@@ -54,11 +83,45 @@ const saleSchema = new mongoose.Schema(
       idempotencyKey: String,
       createdAt: Date,
       voidedAt: Date,
-      voidReason: String
+      voidReason: String,
+      creditBalanceAfter: Number
     }
   },
   { timestamps: true, versionKey: false }
 );
+
+saleSchema
+  .virtual('invoiceNumber')
+  .get(function getInvoiceNumber() {
+    return this.invoice?.number || this.number;
+  });
+
+saleSchema
+  .virtual('customerName')
+  .get(function getCustomerName() {
+    return this.customerSnapshot?.name || null;
+  });
+
+saleSchema
+  .virtual('totalUSD')
+  .get(function getTotalUSD() {
+    return this.totals?.total?.amount ?? 0;
+  });
+
+saleSchema
+  .virtual('totalVES')
+  .get(function getTotalVES() {
+    return this.totals?.totalInVES?.amount ?? 0;
+  });
+
+saleSchema
+  .virtual('exchangeRate')
+  .get(function getExchangeRate() {
+    return this.exchangeSnapshot?.value ?? null;
+  });
+
+saleSchema.set('toJSON', { virtuals: true });
+saleSchema.set('toObject', { virtuals: true });
 
 saleSchema.index({ 'audit.createdAt': -1 });
 saleSchema.index({ customerId: 1, 'audit.createdAt': -1 });

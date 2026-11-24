@@ -1,0 +1,42 @@
+services:
+  mongo:
+    image: mongo:8
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - >-
+          try { rs.status().ok } catch (e) {
+          rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok }
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 10s
+
+  api:
+    build: .
+    ports:
+      - "${PORT:-3500}:3500"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MONGO_URI: mongodb://mongo:27017/pymeplus_ia?replicaSet=rs0
+      NODE_ENV: ${NODE_ENV:-development}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+
+volumes:
+  mongo-data:

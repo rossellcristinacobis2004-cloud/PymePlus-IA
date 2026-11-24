@@ -76,3 +76,22 @@ export function validateDocument(documentType, documentNumber) {
 
   return { documentType: type, documentNumber: number };
 }
+
+/**
+ * Valida el documento identificador de una venta.
+ * Acepta RIF (J-12345678-9), Cédula (V-12345678) y pasaporte alfanumérico.
+ * El nombre `customerRUT` se conserva por compatibilidad con el contrato solicitado.
+ */
+export function parseCustomerRUT(value) {
+  const text = String(value || '').trim().toUpperCase();
+  if (!text) return null;
+  if (RIF_RE.test(text)) return validateDocument('RIF', text).documentNumber;
+  if (CI_RE.test(text)) return validateDocument('CI', text).documentNumber;
+  if (/^[A-Z0-9-]{6,20}$/.test(text)) return validateDocument('PASSPORT', text).documentNumber;
+
+  throw badRequest('Documento de identidad inválido.', {
+    field: 'customerRUT',
+    userMessage: 'El RIF, la cédula o el pasaporte no son válidos.',
+    suggestion: 'Usa formatos como J-12345678-9 o V-12345678.'
+  });
+}

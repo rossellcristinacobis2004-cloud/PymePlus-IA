@@ -31,3 +31,7 @@ Thumbs.db
 # Cobertura y temporales
 coverage/
 .tmp/
+
+# Cola de correo (contiene facturas, no versionar)
+microservices/outbox/
+
