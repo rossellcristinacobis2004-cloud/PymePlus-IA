@@ -15,8 +15,10 @@ uploads/*
 !**/uploads/
 !**/uploads/.gitkeep
 
-# Facturas generadas en pruebas (no versionar)
+# Facturas generadas: contienen RUT, correo y montos (no versionar)
 projects/backend/uploads/documents/invoices/
+projects/backend/var/invoices/
+projects/backend/var/
 
 # Respaldos binarios / temporales
 backup.doc

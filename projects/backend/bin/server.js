@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import express from 'express';
 import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
@@ -11,6 +12,7 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
 import { connectDatabase, databaseState } from '../databases/mongodb.js';
+import { normalizeError } from '../helpers/errors.js';
 import { nowIso } from '../helpers/response.js';
 import authRoutes from '../api/auth/auth.routes.js';
 import productRoutes from '../api/products/products.routes.js';
@@ -26,8 +28,43 @@ const __dirname = dirname(__filename);
 const BODY_LIMIT = process.env.BODY_LIMIT || '10mb';
 const MAX_FILE_SIZE = Number(process.env.MAX_FILE_SIZE_MB || 10) * 1024 * 1024;
 
+/** TRUST_PROXY por defecto desactivado: solo se confía si se configura explícitamente. */
+function resolveTrustProxy() {
+  const value = process.env.TRUST_PROXY;
+  if (value === undefined || value === '' || value === 'false') return false;
+  if (value === 'true') return true;
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 0 ? number : false;
+}
+
+function assertProductionSecrets() {
+  if (process.env.NODE_ENV !== 'production') return;
+  for (const name of ['JWT_SECRET', 'JWT_REFRESH_SECRET']) {
+    const secret = process.env[name] || '';
+    if (secret.length < 32) {
+      throw new Error(`${name} debe tener al menos 32 caracteres en producción.`);
+    }
+  }
+}
+
+/** Pathname decodificado: express.static decodifica, app.use() no. */
+function safePathname(req) {
+  const raw = (req.originalUrl || req.url || '').split('?')[0];
+  try {
+    // URL() normaliza "%2e%2e" a ".." y colapsa segmentos antes de que podamos
+    // inspeccionarlos: se detecta primero sobre la cadena original.
+    if (/%2e|%2f|%5c|\.\.|\\/i.test(raw)) return null;
+    return decodeURIComponent(new URL(raw, 'http://localhost').pathname)
+      .replace(/\\/g, '/')
+      .toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 class WebServer {
   constructor() {
+    assertProductionSecrets();
     this.app = express();
     this.server = http.createServer(this.app);
     this.io = new SocketIOServer(this.server, {
@@ -36,7 +73,7 @@ class WebServer {
     });
 
     this.app.set('io', this.io);
-    this.app.set('trust proxy', Number(process.env.TRUST_PROXY || 1));
+    this.app.set('trust proxy', resolveTrustProxy());
     this.app.disable('x-powered-by');
 
     this.database();
@@ -67,6 +104,14 @@ class WebServer {
   }
 
   middlewares() {
+    // Toda respuesta (incluida la de error) lleva un requestId trazable.
+    this.app.use((req, res, next) => {
+      const incoming = String(req.headers['x-request-id'] || '').slice(0, 100);
+      req.requestId = incoming || crypto.randomUUID();
+      res.setHeader('X-Request-Id', req.requestId);
+      return next();
+    });
+
     // Cabeceras de seguridad. CSP desactivado: la SPA Angular se sirve desde el mismo origen.
     this.app.use(helmet({ contentSecurityPolicy: false }));
     this.app.use(cors({ origin: this.#corsOrigin(), credentials: true }));
@@ -129,7 +174,10 @@ class WebServer {
           });
           if (payload.sub && payload.type !== 'refresh') {
             socket.data.userId = String(payload.sub);
+            socket.data.role = payload.role === 'Administrador' ? 'ADMIN' : payload.role;
+            socket.join('authenticated');
             socket.join(`user:${socket.data.userId}`);
+            if (socket.data.role) socket.join(`role:${socket.data.role}`);
           }
         } catch {
           // Cliente invitado: se conecta sin salas privadas.
@@ -149,10 +197,25 @@ class WebServer {
     const uploadsPath = path.join(__dirname, '../uploads');
 
     // Las facturas contienen RUT, correo y montos: NO son estáticos públicos.
-    // Se entregan únicamente por /api/sales/:id/invoice.pdf con JWT.
-    this.app.use('/uploads/documents/invoices', (_req, res) => res.status(404).end());
+    // express.static decodifica la URL, pero app.use() compara el path sin decodificar:
+    // por eso se valida también el pathname decodificado (%69, %2f, ..).
+    this.app.use((req, res, next) => {
+      const decoded = safePathname(req);
+      if (decoded === null) return res.status(404).end();
+      if (
+        decoded.split('/').includes('..') ||
+        decoded.includes('/uploads/documents/invoices') ||
+        decoded.includes('/var/invoices')
+      ) {
+        return res.status(404).end();
+      }
+      return next();
+    });
 
-    // Resto de archivos subidos (imágenes, APK con version.json).
+    // Solo directorios explícitamente públicos; documents/* nunca se sirve.
+    this.app.use('/uploads/images', express.static(path.join(uploadsPath, 'images'), { index: false, fallthrough: true }));
+    this.app.use('/uploads/apks', express.static(path.join(uploadsPath, 'apks'), { index: false, fallthrough: true }));
+    this.app.use('/uploads/documents', (_req, res) => res.status(404).end());
     this.app.use('/uploads', express.static(uploadsPath, { index: false, fallthrough: true }));
 
     // Estáticos compilados de Angular.
@@ -192,8 +255,9 @@ class WebServer {
     this.app.use((error, req, res, _next) => {
       if (res.headersSent) return;
 
-      const isDuplicateKey = error.code === 11000;
-      const status = error.status || error.statusCode || (isDuplicateKey ? 409 : 500);
+      const normalized = normalizeError(error);
+      const isDuplicateKey = normalized.code === 11000;
+      const status = normalized.status || normalized.statusCode || (isDuplicateKey ? 409 : 500);
       const isClientError = status < 500;
 
       if (!isClientError) {
@@ -204,15 +268,15 @@ class WebServer {
         success: false,
         message: isClientError ? 'La solicitud no pudo procesarse.' : 'Ocurrió un error interno.',
         userMessage:
-          error.userMessage ||
+          normalized.userMessage ||
           (isDuplicateKey
             ? 'Ya existe un registro con ese identificador.'
             : isClientError
-              ? error.message
+              ? normalized.message
               : 'No pudimos completar la operación. Inténtalo nuevamente.'),
         data: null,
         meta: {
-          requestId: req.headers['x-request-id'] || null,
+          requestId: req.requestId || null,
           timestamp: nowIso(),
           timezone: process.env.TIMEZONE || 'America/Caracas'
         },
@@ -220,10 +284,11 @@ class WebServer {
           {
             code: isDuplicateKey
               ? 'DUPLICATE_KEY'
-              : error.code || (isClientError ? 'VALIDATION_ERROR' : 'INTERNAL_ERROR'),
-            field: error.field || null,
-            detail: error.message,
-            suggestion: error.suggestion || 'Revisa los datos e inténtalo de nuevo.',
+              : normalized.code || (isClientError ? 'VALIDATION_ERROR' : 'INTERNAL_ERROR'),
+            field: normalized.field || null,
+            // Un 500 nunca expone mensajes internos ni stack traces.
+            detail: isClientError ? normalized.message : 'Error interno del servidor.',
+            suggestion: normalized.suggestion || 'Revisa los datos e inténtalo de nuevo.',
             retryable: !isClientError
           }
         ]

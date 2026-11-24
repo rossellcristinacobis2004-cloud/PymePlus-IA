@@ -54,6 +54,8 @@ npm start
 
 En Windows, usa `Copy-Item .env.example .env` en lugar de `cp`. Configura el archivo `.env` antes de iniciar el servidor. El healthcheck queda disponible en `GET /api/health`.
 
+> **Seguridad:** usa secretos de al menos 32 caracteres en producción (`JWT_SECRET`, `JWT_REFRESH_SECRET`); `TRUST_PROXY` por defecto es `false` y solo debe activarse detrás de un proxy de confianza. El seeder está bloqueado cuando `NODE_ENV=production` y no sobrescribe la contraseña de un administrador existente. Las facturas se escriben en `projects/backend/var/invoices/` (ignorado por Git) y solo se descargan por `GET /api/sales/:id/invoice.pdf` con JWT.
+
 ## Pruebas
 
 ```bash
@@ -62,7 +64,7 @@ npm run test:smoke
 npm run test:integration
 ```
 
-Resultados: 33 pruebas unitarias, 6 comprobaciones HTTP y 49 verificaciones de integración, todas correctas.
+Resultados: 41 pruebas unitarias, 6 comprobaciones HTTP y 75 verificaciones de integración, todas correctas. Ejecuta `npm audit --audit-level=high` desde `projects/backend` (desde la raíz falla con `ENOLOCK`).
 
 ## Enlaces
 

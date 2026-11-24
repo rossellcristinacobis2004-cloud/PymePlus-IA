@@ -4,6 +4,8 @@ const BARCODE_RE = /^[0-9]{8,14}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const RIF_RE = /^[JGVPE]-[0-9]{8}-[0-9]$/i;
 const CI_RE = /^[VE]-[0-9]{7,8}$/i;
+// Debe contener al menos un carácter alfanumérico: "----------" no es un pasaporte.
+const PASSPORT_RE = /^(?=.*[A-Z0-9])[A-Z0-9-]{6,20}$/;
 
 export function requireString(value, field, { min = 1, max = 200 } = {}) {
   if (typeof value !== 'string' || value.trim().length < min || value.trim().length > max) {
@@ -65,7 +67,7 @@ export function validateDocument(documentType, documentNumber) {
     });
   }
 
-  const valid = type === 'RIF' ? RIF_RE.test(number) : type === 'CI' ? CI_RE.test(number) : number.length >= 6;
+  const valid = type === 'RIF' ? RIF_RE.test(number) : type === 'CI' ? CI_RE.test(number) : PASSPORT_RE.test(number);
   if (!valid) {
     throw badRequest('Número de documento inválido.', {
       field: 'documentNumber',
@@ -87,11 +89,66 @@ export function parseCustomerRUT(value) {
   if (!text) return null;
   if (RIF_RE.test(text)) return validateDocument('RIF', text).documentNumber;
   if (CI_RE.test(text)) return validateDocument('CI', text).documentNumber;
-  if (/^[A-Z0-9-]{6,20}$/.test(text)) return validateDocument('PASSPORT', text).documentNumber;
+  if (PASSPORT_RE.test(text)) return validateDocument('PASSPORT', text).documentNumber;
 
   throw badRequest('Documento de identidad inválido.', {
     field: 'customerRUT',
     userMessage: 'El RIF, la cédula o el pasaporte no son válidos.',
     suggestion: 'Usa formatos como J-12345678-9 o V-12345678.'
   });
+}
+
+/** Número finito dentro de un rango; evita NaN e Infinity en la base de datos. */
+export function requireNumber(value, field, { min = -Infinity, max = Infinity } = {}) {
+  const number = Number(value);
+  if (
+    value === '' ||
+    value === null ||
+    value === undefined ||
+    !Number.isFinite(number) ||
+    number < min ||
+    number > max
+  ) {
+    throw badRequest(`El campo ${field} no es válido.`, {
+      field,
+      userMessage: `Revisa el campo ${field}.`,
+      suggestion: `Usa un número entre ${min} y ${max}.`
+    });
+  }
+  return number;
+}
+
+/** Entero positivo para paginación, con valor por defecto y tope. */
+export function positiveInt(value, field, fallback, max = 100) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 1 || number > max) {
+    throw badRequest(`El campo ${field} no es válido.`, {
+      field,
+      userMessage: `Revisa el campo ${field}.`,
+      suggestion: `Usa un entero entre 1 y ${max}.`
+    });
+  }
+  return number;
+}
+
+/** Fecha de filtro: rechaza cadenas como "basura" antes de tocar Mongoose. */
+export function dateParam(value, field) {
+  if (value === undefined || value === null || value === '') return undefined;
+  const text = String(value).trim();
+  const parsed = new Date(text);
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(text);
+  const validFormat = /^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(text);
+  if (
+    !validFormat ||
+    Number.isNaN(parsed.getTime()) ||
+    (isDateOnly && parsed.toISOString().slice(0, 10) !== text)
+  ) {
+    throw badRequest(`La fecha ${field} no es válida.`, {
+      field,
+      userMessage: `Revisa la fecha ${field}.`,
+      suggestion: 'Usa el formato YYYY-MM-DD.'
+    });
+  }
+  return parsed;
 }

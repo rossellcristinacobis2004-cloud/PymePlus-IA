@@ -7,12 +7,21 @@ import { createSimplePdf } from './pdf.js';
  */
 
 export function invoiceFileName(sale) {
-  const number = String(sale?.invoice?.number || sale?.number || 'FAC-000000');
-  return `${number.replace(/^VTA/, 'FAC')}.pdf`;
+  const number = invoiceNumber(sale)
+    .replace(/[^A-Za-z0-9._-]/g, '_')
+    .replace(/^\.+/, '')
+    .slice(0, 80) || 'FAC-000000';
+  return `${number}.pdf`;
 }
 
 function invoiceNumber(sale) {
   return String(sale?.invoice?.number || sale?.number || 'FAC-000000').replace(/^VTA/, 'FAC');
+}
+
+function isoDate(value) {
+  if (!value) return 'N/A';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
 }
 
 function taxLabel(rate) {
@@ -34,7 +43,7 @@ export function buildInvoiceLines(sale) {
     `Factura: ${invoiceNumber(sale)}`,
     `Control: ${sale?.invoice?.controlNumber || 'N/A'}`,
     `Estado: ${sale?.status || 'COMPLETED'}`,
-    `Fecha: ${sale?.audit?.createdAt || sale?.createdAt || ''}`,
+    `Fecha: ${isoDate(sale?.audit?.createdAt || sale?.createdAt)}`,
     `Cliente: ${customer.name || 'Consumidor final'}`,
     `Documento: ${sale?.customerRUT || customer.documentNumber || 'N/A'}`,
     `Correo: ${customer.email || 'N/A'}`,

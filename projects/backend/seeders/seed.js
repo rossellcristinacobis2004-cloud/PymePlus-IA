@@ -11,6 +11,11 @@ const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'Admin12345';
 const BCV_RATE = Number(process.env.FALLBACK_BCV_RATE || 36);
 
 async function seed() {
+  // El seeder resetea credenciales y crea datos de demostración: nunca en producción.
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('El seeder está deshabilitado en producción.');
+  }
+
   await connectDatabase();
   console.log('[SEED] Iniciando datos base de PymePlus IA...');
 
@@ -23,12 +28,10 @@ async function seed() {
       role: 'ADMIN'
     });
   } else {
-    admin.password = ADMIN_PASSWORD;
-    admin.role = 'ADMIN';
-    admin.active = true;
-    await admin.save();
+    // No se sobrescribe la contraseña de un administrador existente.
+    console.log(`[SEED] El usuario admin ${ADMIN_EMAIL} ya existe; se conserva su contraseña.`);
   }
-  console.log(`[SEED] Usuario admin: ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`);
+  console.log(`[SEED] Usuario admin disponible: ${ADMIN_EMAIL}`);
 
   await ExchangeRate.updateOne(
     { date: todayCaracas(), source: 'BCV' },

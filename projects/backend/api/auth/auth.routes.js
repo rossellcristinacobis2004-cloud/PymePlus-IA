@@ -4,7 +4,12 @@ import jwt from 'jsonwebtoken';
 import User from './user.model.js';
 import RefreshToken from './refresh-token.model.js';
 import { requireAuth } from '../../middlewares/auth.js';
-import { loginLimiter } from '../../middlewares/rate-limit.js';
+import {
+  loginLimiter,
+  refreshLimiter,
+  forgotPasswordLimiter,
+  resetPasswordLimiter
+} from '../../middlewares/rate-limit.js';
 import { ok, nowIso } from '../../helpers/response.js';
 import { ApiError, badRequest, unauthorized } from '../../helpers/errors.js';
 import { validateEmail, requireString } from '../../helpers/validators.js';
@@ -27,6 +32,19 @@ function issueAccessToken(user) {
 
 function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+/** Los tokens de recuperación viven en memoria: se podan para no crecer sin límite. */
+function pruneResetTokens() {
+  const now = Date.now();
+  for (const [key, entry] of resetTokens) {
+    if (entry.expiresAt < now) resetTokens.delete(key);
+  }
+  if (resetTokens.size > 10_000) {
+    for (const key of [...resetTokens.keys()].slice(0, resetTokens.size - 10_000)) {
+      resetTokens.delete(key);
+    }
+  }
 }
 
 function issueRefreshToken(user) {
@@ -86,7 +104,7 @@ router.post('/login', loginLimiter, async (req, res, next) => {
   }
 });
 
-router.post('/refresh', async (req, res, next) => {
+router.post('/refresh', refreshLimiter, async (req, res, next) => {
   try {
     const token = String(req.body?.refreshToken || '').trim();
     if (!token) throw badRequest('Se requiere refreshToken.', { field: 'refreshToken' });
@@ -129,15 +147,16 @@ router.post('/refresh', async (req, res, next) => {
   }
 });
 
-router.post('/forgot-password', async (req, res, next) => {
+router.post('/forgot-password', forgotPasswordLimiter, async (req, res, next) => {
   try {
     const email = validateEmail(req.body?.email);
+    pruneResetTokens();
     const user = await User.findOne({ email, active: true });
 
     // Siempre responde lo mismo para no revelar qué correos están registrados.
     if (user) {
       const token = crypto.randomBytes(32).toString('hex');
-      resetTokens.set(token, { userId: user.id, expiresAt: Date.now() + 30 * 60_000 });
+      resetTokens.set(hashToken(token), { userId: user.id, expiresAt: Date.now() + 30 * 60_000 });
       const baseUrl = process.env.PASSWORD_RESET_URL || 'http://localhost:4200/reset-password';
       const link = `${baseUrl}?token=${encodeURIComponent(token)}`;
       const result = await sendInvoice({
@@ -157,14 +176,16 @@ router.post('/forgot-password', async (req, res, next) => {
   }
 });
 
-router.post('/reset-password', async (req, res, next) => {
+router.post('/reset-password', resetPasswordLimiter, async (req, res, next) => {
   try {
     const token = String(req.body?.token || '').trim();
     const password = requireString(req.body?.password, 'password', { min: 8, max: 100 });
-    const entry = resetTokens.get(token);
+    pruneResetTokens();
+    const tokenKey = hashToken(token);
+    const entry = resetTokens.get(tokenKey);
 
     if (!entry || entry.expiresAt < Date.now()) {
-      resetTokens.delete(token);
+      resetTokens.delete(tokenKey);
       throw badRequest('El enlace de recuperación no es válido o expiró.', {
         field: 'token',
         userMessage: 'El enlace de recuperación ya no está disponible.',
@@ -177,7 +198,7 @@ router.post('/reset-password', async (req, res, next) => {
 
     user.password = password;
     await user.save();
-    resetTokens.delete(token);
+    resetTokens.delete(tokenKey);
 
     return ok(res, { message: 'Contraseña actualizada correctamente. Inicia sesión para continuar.' });
   } catch (error) {

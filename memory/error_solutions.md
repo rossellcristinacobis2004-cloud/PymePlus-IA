@@ -129,3 +129,41 @@ Registro de errores y parches aplicados.
 ### Semilla con contraseña de administrador pública
 - **Causa:** `.env.example` y el seeder usan `Admin12345`; usarlo tal cual en producción permite takeover de ADMIN.
 - **Solución:** advertencia explícita en `.env.example` y en el README del backend para cambiarla antes de sembrar datos.
+
+## 2026-11-23 — Auditoría funcional y de concurrencia
+
+### Fuga por codificación percentual de rutas de facturas
+- **Causa:** `app.use('/uploads/documents/invoices')` compara el path sin decodificar, pero `express.static` sí lo decodifica.
+- **Solución:** middleware que decodifica el pathname y bloquea `..`, `/uploads/documents/*` y `/var/invoices`. `new URL()` colapsa `%2e%2e` antes de inspeccionarlo, por lo que también se revisa la URL cruda. Los PDF se movieron a `var/invoices/`, fuera del árbol servido.
+
+### Entradas malformadas devolvían 500
+- **Causa:** `new Date('basura')`, `items:[null]`, `batches:[null]` y ObjectId inválidos llegaban a Mongoose o a acceso de propiedades sin guarda.
+- **Solución:** `normalizeError()` traduce CastError/ValidationError/SyntaxError con `body`/`entity.too.large` a 400/413; `requireNumber`, `positiveInt` y `dateParam` validan antes de la base de datos. Los 500 ya no incluyen `detail` ni suggestion internos.
+
+### Cualquier autenticado veía ventas, clientes y reportes
+- **Causa:** las rutas solo usaban `requireAuth`; `assertSaleAccess` no existía.
+- **Solución:** roles explícitos por ruta y filtro forzado por `audit.sellerId` para `CASHIER`; `WAREHOUSE` recibe 403. `assertSaleAccess` se aplica también a detalle, PDF y reenvío.
+
+### `resend-invoice` sin propiedad
+- **Causa:** el endpoint no comprobaba dueño ni rol.
+- **Solución:** `assertSaleAccess` antes de leer el correo y generar el PDF.
+
+### Lote vencido seleccionado e `increaseStock()` con lote ausente
+- **Causa:** el filtro de `decrementStock` no excluía vencidos de forma consistente; la reversión daba por supuesto que el lote seguía en el producto.
+- **Solución:** `decrementStock` vuelve a filtrar el candidato en memoria y aplica `$elemMatch` con expiración; `increaseStock` valida cantidad y lote y lanza `conflict` legible en vez de `TypeError`.
+
+### Pago a crédito con `paid`/`change` inconsistentes y lost update
+- **Causa:** se calculaba el cambio con el monto pagado y se actualizaba el saldo con un valor leído fuera de la transacción.
+- **Solución:** en `CREDIT`, `paid=0` y `change=0`; `updateOne` condicional sobre `credit.balanceUSD` y `credit.limitUSD` con verificación de `matchedCount`.
+
+### Doble anulación concurrente y aprobación `FINANCE` inalcanzable
+- **Causa:** `voidSale` comprobaba `status` fuera de la transacción y la ruta solo permitía `ADMIN`/`SUPERVISOR`.
+- **Solución:** reclamo condicional `status: COMPLETED` dentro de la transacción, roles `ADMIN`/`SUPERVISOR`/`FINANCE` en la ruta y regla de plazo con `FINANCE` como aprobador fuera de ventana. La reversión emite eventos de stock reales con `delta` positivo.
+
+### Registros de idempotencia `FAILED` permanentes
+- **Causa:** un fallo anterior marcaba el registro como `FAILED` y la rama solo aceptaba `COMPLETED`.
+- **Solución:** al fallar sin commit se elimina el registro `PENDING`; la venta huérfana sin factura se repara en el reintento.
+
+### Tokens de recuperación y secretos inseguros
+- **Causa:** `resetTokens` crecía sin límite y guardaba tokens en claro; `TRUST_PROXY=1` por defecto; JWT sin longitud mínima en producción.
+- **Solución:** tokens hasheados con SHA-256 y poda por expiración/tamaño, limitadores de refresh/forgot/reset, `TRUST_PROXY=false` y validación de secretos de 32 caracteres al construir el servidor en producción. `requireAuth` revalida rol/estado en DB con caché de 30 s.

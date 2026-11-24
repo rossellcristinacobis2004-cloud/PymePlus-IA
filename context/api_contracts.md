@@ -242,12 +242,16 @@ Copia inmutable de la tasa vigente al momento de la operación. Debe persistirse
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| POST | `/api/sales` | Registrar venta (transaccional, requiere `X-Idempotency-Key`) |
+| POST | `/api/sales` | Registrar venta (transaccional, requiere `X-Idempotency-Key`; roles `ADMIN`, `SUPERVISOR`, `CASHIER`) |
 | GET | `/api/sales` | Listado con filtros `from`, `to`, `status`, `customerId`, `sellerId` |
 | GET | `/api/sales/:id` | Detalle |
-| POST | `/api/sales/:id/void` | Anular con reversión de stock (roles `ADMIN`, `SUPERVISOR`) |
-| GET | `/api/sales/:id/invoice.pdf` | Descargar factura PDF |
+| POST | `/api/sales/:id/void` | Anular con reversión de stock (`ADMIN`/`SUPERVISOR` hasta `VOID_WINDOW_HOURS`; fuera de plazo solo `FINANCE`) |
+| GET | `/api/sales/:id/invoice.pdf` | Descargar factura PDF con JWT |
 | POST | `/api/sales/:id/resend-invoice` | Reenviar comprobante por correo |
+
+**Alcance de lectura:** `ADMIN`/`SUPERVISOR`/`FINANCE` ven todas las ventas; `CASHIER` solo las de `audit.sellerId` (el filtro `sellerId` se ignora si intenta suplantar otro vendedor); `WAREHOUSE` recibe `403` en ventas, clientes, reportes y tasas. Los filtros inválidos (`status`, `from`, `to`, `page`, `limit`, `customerId`, `sellerId`) responden `400`, nunca `500`.
+
+**Anulación:** es condicional sobre `status = COMPLETED` (una segunda anulación concurrente responde `409`), revierte el stock con lotes reales y vuelve a generar la factura como `VOID`. El pago a crédito registra `paid = 0`, `change = 0` y actualiza el saldo con `updateOne` condicional: dos ventas concurrentes no pierden actualizaciones ni superan el límite.
 
 ### 4.2 Ejemplo de petición
 
@@ -495,7 +499,11 @@ Copia inmutable de la tasa vigente al momento de la operación. Debe persistirse
 | `invoice:ready` | Server → Client | `{ saleId, invoiceNumber }` (sala `user:<sellerId>`) |
 | `invoice:voided` / `sale:voided` | Server → Client | `{ saleId, status, invoiceNumber? }` (sala `user:<sellerId>`) |
 
-**Salas sugeridas:** `role:cashier`, `role:admin`, `warehouse`, `product:<id>`, `user:<userId>`. El socket acepta el JWT en `auth.token` o `Authorization: Bearer`; sin token se conecta como invitado, sin salas privadas. Los comprobantes **no** se sirven como estáticos: `GET /uploads/documents/invoices/*` responde 404 y la única descarga autorizada es `GET /api/sales/:id/invoice.pdf`.
+**Salas implementadas:** `authenticated`, `user:<userId>` y `role:<ROL>` (`ADMIN`, `SUPERVISOR`, `FINANCE`, `CASHIER`, `WAREHOUSE`). El socket acepta el JWT en `auth.token` o `Authorization: Bearer`; sin token se conecta como invitado, sin salas privadas. `sale:created`, `stock_updated`, `stock:updated`, `exchangeRate:updated`, `invoice:ready` e `invoice:voided` **nunca** se emiten con `io.emit` global: solo a salas autenticadas.
+
+Los comprobantes se generan en `var/invoices/` (fuera del árbol servido) y **no** son archivos estáticos: `GET /uploads/documents/*` responde `404`, incluyendo las formas codificadas (`%69`, `%2f`, `%2e%2e`). La única descarga autorizada es `GET /api/sales/:id/invoice.pdf` con JWT.
+
+**Errores de entrada:** JSON malformado, ObjectId inválido, error de validación de Mongoose y payload demasiado grande se traducen a `400`/`413` con el sobre estándar. Un `500` nunca expone mensajes internos ni stack traces; todas las respuestas incluyen `meta.requestId`.
 
 ---
 

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'fs/promises';
+import http from 'node:http';
 import path from 'path';
 import mongoose from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
@@ -42,6 +43,20 @@ async function request(pathname, { method = 'GET', token, body, headers = {} } =
   });
   const text = await response.text();
   return { status: response.status, body: text ? JSON.parse(text) : null };
+}
+
+/** Petición con path crudo: fetch/undici normaliza los segmentos %2e%2e. */
+function rawStatus(pathname) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(
+      { host: '127.0.0.1', port: server.server.address().port, path: pathname },
+      (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode));
+      }
+    );
+    req.on('error', reject);
+  });
 }
 
 let passed = 0;
@@ -501,6 +516,263 @@ try {
     adminPrice.status === 200 && adminPrice.body.data.priceUSD === 10,
     JSON.stringify(adminPrice.body)
   );
+
+  // ---------------------------------------------------------------------------
+  // Regresiones de seguridad: codificación de rutas, entradas malformadas,
+  // autorización por rol/propiedad y concurrencia.
+  // ---------------------------------------------------------------------------
+  const secProduct = await request('/api/products', {
+    method: 'POST',
+    token,
+    body: {
+      sku: 'SEC-000001',
+      name: 'Producto de regresión',
+      priceUSD: 10,
+      stock: 10,
+      batches: [{ lot: 'SEC-LOT', quantity: 10, expirationDate: '2028-01-01' }]
+    }
+  });
+  check('producto para regresiones', secProduct.status === 201, JSON.stringify(secProduct.body.errors));
+  const secId = secProduct.body.data.id;
+
+  // express.static decodifica la URL pero app.use() compara el path sin decodificar.
+  for (const encoded of [
+    '/uploads/documents/%69nvoices/FAC-2026-000001.pdf',
+    '/uploads/documents/invoices%2fFAC-2026-000001.pdf',
+    '/uploads/documents/%2e%2e/%2e%2e/helpers/errors.js'
+  ]) {
+    const status = await rawStatus(encoded);
+    check(`ruta codificada bloqueada: ${encoded}`, status === 404, `status=${status}`);
+  }
+
+  const malformed = await fetch(`${base}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{'
+  });
+  check('JSON malformado responde 400', malformed.status === 400, `status=${malformed.status}`);
+
+  const nullItem = await request('/api/sales', {
+    method: 'POST',
+    token,
+    body: { items: [null], payment: { method: 'CASH_USD' } },
+    headers: { 'X-Idempotency-Key': '91000000-0000-4000-8000-000000000001' }
+  });
+  check('items:[null] responde 400', nullItem.status === 400, JSON.stringify(nullItem.body));
+
+  const nullBatch = await request('/api/products', {
+    method: 'POST',
+    token,
+    body: { sku: 'SEC-000002', name: 'Lote nulo', priceUSD: 1, batches: [null] }
+  });
+  check('batches:[null] responde 400', nullBatch.status === 400, JSON.stringify(nullBatch.body));
+
+  const badDate = await request('/api/sales?from=basura', { token });
+  const badPage = await request('/api/sales?page=0', { token });
+  check('fecha de filtro inválida responde 400', badDate.status === 400, JSON.stringify(badDate.body));
+  check('paginación inválida responde 400', badPage.status === 400, JSON.stringify(badPage.body));
+
+  const badEmail = await request('/api/sales', {
+    method: 'POST',
+    token,
+    body: {
+      items: [{ productId: secId, quantity: 1 }],
+      customerEmail: 'correo-invalido',
+      payment: { method: 'CASH_USD' }
+    },
+    headers: { 'X-Idempotency-Key': '91000000-0000-4000-8000-000000000002' }
+  });
+  check('customerEmail inválido responde 400', badEmail.status === 400, JSON.stringify(badEmail.body));
+
+  const badPassport = await request('/api/customers', {
+    method: 'POST',
+    token,
+    body: { name: 'Pasaporte inválido', documentType: 'PASSPORT', documentNumber: '----------' }
+  });
+  check('pasaporte sin caracteres responde 400', badPassport.status === 400, JSON.stringify(badPassport.body));
+
+  const warehouseSales = await request('/api/sales', { token: warehouseToken });
+  const warehouseReports = await request('/api/reports/sales', { token: warehouseToken });
+  const warehouseCustomers = await request('/api/customers', { token: warehouseToken });
+  check(
+    'almacén sin acceso a ventas, reportes ni clientes',
+    [warehouseSales.status, warehouseReports.status, warehouseCustomers.status].every((status) => status === 403),
+    JSON.stringify([warehouseSales.status, warehouseReports.status, warehouseCustomers.status])
+  );
+
+  await User.create({
+    name: 'Cajero Regresión',
+    email: 'cashier@test.local',
+    password: 'Admin12345',
+    role: 'CASHIER'
+  });
+  const cashierLogin = await request('/api/auth/login', {
+    method: 'POST',
+    body: { email: 'cashier@test.local', password: 'Admin12345' }
+  });
+  const cashierToken = cashierLogin.body.data.token;
+  const cashierId = cashierLogin.body.data.user.id;
+  check('login de cajero', cashierLogin.status === 200 && Boolean(cashierToken));
+
+  const cashierList = await request('/api/sales', { token: cashierToken });
+  check('cajero no ve ventas ajenas', cashierList.status === 200 && cashierList.body.data.length === 0);
+
+  const foreignId = invoiceSale.body.data.id;
+  const foreignGet = await request(`/api/sales/${foreignId}`, { token: cashierToken });
+  const foreignPdf = await fetch(`${base}/api/sales/${foreignId}/invoice.pdf`, {
+    headers: { Authorization: `Bearer ${cashierToken}` }
+  });
+  const foreignResend = await request(`/api/sales/${foreignId}/resend-invoice`, {
+    method: 'POST',
+    token: cashierToken,
+    body: {}
+  });
+  check(
+    'cajero no consulta, descarga ni reenvía venta ajena',
+    [foreignGet.status, foreignPdf.status, foreignResend.status].every((status) => status === 403),
+    JSON.stringify([foreignGet.status, foreignPdf.status, foreignResend.status])
+  );
+
+  const cashierSale = await request('/api/sales', {
+    method: 'POST',
+    token: cashierToken,
+    body: {
+      items: [{ productId: secId, quantity: 1 }],
+      payment: { method: 'CASH_USD' }
+    },
+    headers: { 'X-Idempotency-Key': '91000000-0000-4000-8000-000000000003' }
+  });
+  check('cajero registra su propia venta', cashierSale.status === 201, JSON.stringify(cashierSale.body.errors));
+  const ownList = await request('/api/sales', { token: cashierToken });
+  check(
+    'cajero solo lista sus ventas',
+    ownList.body.data.length === 1 && ownList.body.data[0].id === cashierSale.body.data.id,
+    JSON.stringify(ownList.body.data.map((item) => item.id))
+  );
+  const spoofed = await request(`/api/sales?sellerId=${cashierId}`, { token: cashierToken });
+  check(
+    'cajero no puede suplantar el filtro de vendedor',
+    spoofed.body.data.length === 1 && spoofed.body.data[0].id === cashierSale.body.data.id
+  );
+
+  const privateEvents = ['sale:created', 'stock_updated', 'stock:updated', 'exchangeRate:updated'];
+  check(
+    'eventos de negocio nunca se emiten a sockets invitados',
+    !privateEvents.some((event) => emitted.some((item) => item.event === event && item.room === null)),
+    JSON.stringify(emitted.filter((item) => item.room === null).map((item) => item.event))
+  );
+
+  const expiredProduct = await request('/api/products', {
+    method: 'POST',
+    token,
+    body: {
+      sku: 'SEC-000003',
+      name: 'Producto vencido',
+      priceUSD: 5,
+      stock: 2,
+      batches: [{ lot: 'VENCIDO', quantity: 2, expirationDate: '2020-01-01' }]
+    }
+  });
+  const expiredSale = await request('/api/sales', {
+    method: 'POST',
+    token,
+    body: {
+      items: [{ productId: expiredProduct.body.data.id, quantity: 1 }],
+      payment: { method: 'CASH_USD' }
+    },
+    headers: { 'X-Idempotency-Key': '91000000-0000-4000-8000-000000000004' }
+  });
+  check(
+    'lote vencido no se puede vender',
+    expiredSale.status === 409 && expiredSale.body.errors[0].code === 'EXPIRED_BATCH',
+    JSON.stringify(expiredSale.body)
+  );
+
+  const { increaseStock } = await import('../services/inventory.service.js');
+  let missingLotError = null;
+  try {
+    await increaseStock({ productId: secId, quantity: 1, lot: 'LOTE-INEISTENTE' });
+  } catch (error) {
+    missingLotError = error;
+  }
+  check(
+    'reversión con lote inexistente falla de forma legible',
+    missingLotError?.status === 409 && missingLotError?.code === 'INVALID_LOT',
+    JSON.stringify({ status: missingLotError?.status, code: missingLotError?.code })
+  );
+
+  const doubleVoidSale = await request('/api/sales', {
+    method: 'POST',
+    token,
+    body: {
+      items: [{ productId: secId, quantity: 1 }],
+      payment: { method: 'CASH_USD' }
+    },
+    headers: { 'X-Idempotency-Key': '91000000-0000-4000-8000-000000000005' }
+  });
+  const [voidA, voidB] = await Promise.all([
+    request(`/api/sales/${doubleVoidSale.body.data.id}/void`, {
+      method: 'POST',
+      token,
+      body: { reason: 'Primera anulación concurrente' }
+    }),
+    request(`/api/sales/${doubleVoidSale.body.data.id}/void`, {
+      method: 'POST',
+      token,
+      body: { reason: 'Segunda anulación concurrente' }
+    })
+  ]);
+  check(
+    'doble anulación concurrente restaura stock una sola vez',
+    [voidA.status, voidB.status].sort().join(',') === '200,409',
+    JSON.stringify([voidA.status, voidB.status])
+  );
+  const afterDoubleVoid = await Product.findById(secId).lean();
+  check('stock tras doble anulación', afterDoubleVoid.stock.available === 9, `stock=${afterDoubleVoid.stock.available}`);
+  check(
+    'anulación emite eventos de stock con delta positivo',
+    emitted.some(
+      (item) =>
+        ['stock_updated', 'stock:updated'].includes(item.event) &&
+        item.payload.reason === 'SALE_VOID' &&
+        item.payload.delta === 1
+    ),
+    JSON.stringify(emitted.filter((item) => item.payload?.reason === 'SALE_VOID').map((item) => item.event))
+  );
+
+  const concurrentCustomer = await Customer.create({
+    name: 'Crédito Concurrente',
+    documentType: 'RIF',
+    documentNumber: 'J-22334455-1',
+    email: 'concurrente@test.local',
+    credit: { enabled: true, limitUSD: 15, balanceUSD: 0 }
+  });
+  const creditBody = {
+    items: [{ productId: secId, quantity: 1 }],
+    customerId: String(concurrentCustomer._id),
+    payment: { method: 'CREDIT' }
+  };
+  const [creditA, creditB] = await Promise.all([
+    request('/api/sales', {
+      method: 'POST',
+      token,
+      body: creditBody,
+      headers: { 'X-Idempotency-Key': '91000000-0000-4000-8000-000000000006' }
+    }),
+    request('/api/sales', {
+      method: 'POST',
+      token,
+      body: creditBody,
+      headers: { 'X-Idempotency-Key': '91000000-0000-4000-8000-000000000007' }
+    })
+  ]);
+  check(
+    'ventas a crédito concurrentes no pierden actualización',
+    [creditA.status, creditB.status].sort().join(',') === '201,409',
+    JSON.stringify([creditA.status, creditB.status, creditA.body.errors, creditB.body.errors])
+  );
+  const finalCredit = await Customer.findById(concurrentCustomer._id).lean();
+  check('saldo de crédito concurrente', finalCredit.credit.balanceUSD === 11.6, `saldo=${finalCredit.credit.balanceUSD}`);
 
   console.log(`\nINTEGRATION OK (${passed} verificaciones)`);
   process.exitCode = 0;

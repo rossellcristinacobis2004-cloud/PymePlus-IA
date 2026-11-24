@@ -25,6 +25,12 @@ jobs:
           cache-dependency-path: projects/backend/package-lock.json
       - run: npm ci
       - run: find . -path ./node_modules -prune -o -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Sin secretos ni facturas versionados
+        run: |
+          if git ls-files | grep -E '(^|/)\.env$|/var/invoices/|/uploads/documents/invoices/'; then
+            echo "Hay secretos o facturas versionados"
+            exit 1
+          fi
       - run: npm test
       - run: npm run test:smoke
       - run: npm run test:integration

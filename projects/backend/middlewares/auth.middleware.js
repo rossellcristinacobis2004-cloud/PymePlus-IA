@@ -1,4 +1,7 @@
 import jwt from 'jsonwebtoken';
+import mongoose from 'mongoose';
+
+import User from '../api/auth/user.model.js';
 import { ApiError, forbidden, unauthorized } from '../helpers/errors.js';
 
 /** `ADMIN` es el valor persistido; el literal se acepta por compatibilidad de contrato. */
@@ -19,7 +22,31 @@ export const PRICE_FIELDS = Object.freeze([
   'pricing'
 ]);
 
-export function requireAuth(req, _res, next) {
+// Un usuario degradado o desactivado no debe conservar permisos hasta que expire
+// el JWT. Se revalida en DB con una caché muy corta; sin DB conectada se confía
+// en el token (smoke tests y arranque sin MongoDB).
+const revalidationCache = new Map();
+const REVALIDATE_TTL_MS = Number(process.env.AUTH_REVALIDATE_TTL_MS || 30_000);
+
+export function clearAuthCache() {
+  revalidationCache.clear();
+}
+
+async function revalidate(payload) {
+  if (mongoose.connection.readyState !== 1 || !payload.sub) return null;
+  const id = String(payload.sub);
+  const cached = revalidationCache.get(id);
+  if (cached && Date.now() - cached.at < REVALIDATE_TTL_MS) return cached.value;
+
+  const user = await User.findById(id).select('role active').lean();
+  const value = user
+    ? { role: normalizeRole(user.role), active: Boolean(user.active) }
+    : { active: false };
+  revalidationCache.set(id, { value, at: Date.now() });
+  return value;
+}
+
+export async function requireAuth(req, _res, next) {
   const header = req.headers.authorization || '';
   const [scheme, token] = header.split(' ');
 
@@ -43,10 +70,15 @@ export function requireAuth(req, _res, next) {
       return next(unauthorized('El token de renovación no es válido para acceder.'));
     }
 
+    const current = await revalidate(payload);
+    if (current && !current.active) {
+      return next(unauthorized('El usuario no está activo.'));
+    }
+
     req.user = {
       id: payload.sub,
       name: payload.name,
-      role: normalizeRole(payload.role)
+      role: current?.role || normalizeRole(payload.role)
     };
     return next();
   } catch {

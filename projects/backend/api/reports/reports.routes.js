@@ -1,14 +1,18 @@
 import { Router } from 'express';
 import Sale from '../sales/sale.model.js';
 import Product from '../products/product.model.js';
-import { requireAuth } from '../../middlewares/auth.js';
+import { requireAuth, requireRole } from '../../middlewares/auth.js';
 import { ok } from '../../helpers/response.js';
 import { badRequest } from '../../helpers/errors.js';
+import { dateParam } from '../../helpers/validators.js';
 import { money, round2 } from '../../helpers/money.js';
 import { getActiveRate, snapshot } from '../../services/exchange-rate.service.js';
 import { createSimplePdf } from '../../helpers/pdf.js';
 
 const router = Router();
+
+// Los reportes financieros no están disponibles para CASHIER ni WAREHOUSE.
+const REPORT_ROLES = ['ADMIN', 'SUPERVISOR', 'FINANCE'];
 
 function dateMatch(from, to) {
   const match = { status: 'COMPLETED' };
@@ -20,10 +24,15 @@ function dateMatch(from, to) {
   return match;
 }
 
+function asDay(value) {
+  if (!value) return null;
+  return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
+}
+
 function period(from, to) {
   return {
-    from: from || 'inicio',
-    to: to || new Date().toISOString().slice(0, 10),
+    from: asDay(from) || 'inicio',
+    to: asDay(to) || new Date().toISOString().slice(0, 10),
     timezone: 'America/Caracas'
   };
 }
@@ -306,6 +315,27 @@ const BUILDERS = {
   replenishment: buildReplenishmentReport
 };
 
+/** Normaliza y valida los parámetros antes de tocar Mongoose. */
+function normalizeReportQuery(query = {}) {
+  const currency = String(query.currency || 'USD').toUpperCase();
+  if (!['USD', 'VES'].includes(currency)) {
+    throw badRequest('Moneda no soportada.', { field: 'currency' });
+  }
+
+  const from = dateParam(query.from, 'from');
+  const to = dateParam(query.to, 'to');
+  if (from && to && from > to) {
+    throw badRequest('La fecha desde no puede ser mayor que la fecha hasta.', { field: 'from' });
+  }
+
+  const groupBy = String(query.groupBy || 'day').toLowerCase();
+  if (!['day', 'month', 'category'].includes(groupBy)) {
+    throw badRequest('Agrupación no soportada.', { field: 'groupBy' });
+  }
+
+  return { ...query, currency, groupBy, from, to };
+}
+
 async function runReport(key, query, rate) {
   const builder = BUILDERS[key];
   if (!builder) {
@@ -315,10 +345,10 @@ async function runReport(key, query, rate) {
       suggestion: `Opciones: ${Object.keys(BUILDERS).join(', ')}.`
     });
   }
-  return builder(query, rate);
+  return builder(normalizeReportQuery(query), rate);
 }
 
-router.get('/sales', requireAuth, async (req, res, next) => {
+router.get('/sales', requireAuth, requireRole(...REPORT_ROLES), async (req, res, next) => {
   try {
     const rate = await getActiveRate();
     return ok(res, { data: await runReport('sales', req.query, rate) });
@@ -327,7 +357,7 @@ router.get('/sales', requireAuth, async (req, res, next) => {
   }
 });
 
-router.get('/iva', requireAuth, async (req, res, next) => {
+router.get('/iva', requireAuth, requireRole(...REPORT_ROLES), async (req, res, next) => {
   try {
     const rate = await getActiveRate();
     return ok(res, { data: await runReport('iva', req.query, rate) });
@@ -336,7 +366,7 @@ router.get('/iva', requireAuth, async (req, res, next) => {
   }
 });
 
-router.get('/inventory-valuation', requireAuth, async (req, res, next) => {
+router.get('/inventory-valuation', requireAuth, requireRole(...REPORT_ROLES), async (req, res, next) => {
   try {
     const rate = await getActiveRate();
     return ok(res, { data: await runReport('inventory-valuation', req.query, rate) });
@@ -345,7 +375,7 @@ router.get('/inventory-valuation', requireAuth, async (req, res, next) => {
   }
 });
 
-router.get('/profitability', requireAuth, async (req, res, next) => {
+router.get('/profitability', requireAuth, requireRole(...REPORT_ROLES), async (req, res, next) => {
   try {
     const rate = await getActiveRate();
     return ok(res, { data: await runReport('profitability', req.query, rate) });
@@ -354,7 +384,7 @@ router.get('/profitability', requireAuth, async (req, res, next) => {
   }
 });
 
-router.get('/replenishment', requireAuth, async (req, res, next) => {
+router.get('/replenishment', requireAuth, requireRole(...REPORT_ROLES), async (req, res, next) => {
   try {
     const rate = await getActiveRate();
     return ok(res, { data: await runReport('replenishment', req.query, rate) });
@@ -363,7 +393,7 @@ router.get('/replenishment', requireAuth, async (req, res, next) => {
   }
 });
 
-router.get('/:key/export', requireAuth, async (req, res, next) => {
+router.get('/:key/export', requireAuth, requireRole(...REPORT_ROLES), async (req, res, next) => {
   try {
     const rate = await getActiveRate();
     const report = await runReport(req.params.key, req.query, rate);

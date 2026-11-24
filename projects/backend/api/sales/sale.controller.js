@@ -9,19 +9,45 @@ import Product from '../products/product.model.js';
 import Customer from '../customers/customer.model.js';
 
 import { ok, created, paginate, nowIso } from '../../helpers/response.js';
-import { badRequest, conflict, notFound } from '../../helpers/errors.js';
+import { badRequest, conflict, forbidden, notFound } from '../../helpers/errors.js';
 import { money, round2, toVes } from '../../helpers/money.js';
 import { calculateLine, resolveTaxType } from '../../helpers/tax.js';
 import { resolvePayment } from '../../helpers/payment.js';
-import { parseCustomerRUT } from '../../helpers/validators.js';
+import {
+  parseCustomerRUT,
+  validateEmail,
+  positiveInt,
+  dateParam
+} from '../../helpers/validators.js';
 import { getActiveRate, assertCurrencyAllowed, snapshot } from '../../services/exchange-rate.service.js';
 import { decrementStock, increaseStock, nextSequence } from '../../services/inventory.service.js';
 import { serializeSale } from '../../helpers/serializers.js';
 import { generateInvoicePdf, invoiceFileName } from '../../helpers/pdf-invoice.js';
 import { sendInvoice } from '../../microservices/email.connector.js';
 
-const INVOICE_DIR = path.resolve(process.cwd(), 'uploads/documents/invoices');
+// Fuera del árbol servido por /uploads: los PDF contienen datos fiscales.
+const INVOICE_DIR = path.resolve(process.cwd(), 'var/invoices');
 const VOID_WINDOW_HOURS = Number(process.env.VOID_WINDOW_HOURS || 24);
+const SALES_MANAGER_ROLES = ['ADMIN', 'SUPERVISOR', 'FINANCE'];
+
+/** Los eventos de negocio solo llegan a sockets con JWT válido. */
+function emitToAuthenticated(io, event, payload) {
+  if (io) io.to('authenticated').emit(event, payload);
+}
+
+function canManageSales(user) {
+  return SALES_MANAGER_ROLES.includes(user?.role);
+}
+
+/** Admin/Supervisor/Finanzas ven todo; Cajero solo sus ventas; Almacén ninguna. */
+function assertSaleAccess(req, sale) {
+  if (canManageSales(req.user)) return;
+  if (req.user?.role === 'CASHIER' && String(sale.audit?.sellerId) === String(req.user.id)) return;
+  throw forbidden('No tienes permiso para acceder a esta venta.', {
+    userMessage: 'Esta venta no pertenece a tu usuario.',
+    suggestion: 'Solicita permiso a un supervisor o administrador.'
+  });
+}
 
 async function ensureInvoiceFile(sale) {
   await fs.mkdir(INVOICE_DIR, { recursive: true });
@@ -77,8 +103,18 @@ function validateItems(items) {
       suggestion: 'Escanea un código de barras o busca un producto.'
     });
   }
+  if (items.length > 200) {
+    throw badRequest('La venta tiene demasiados productos.', {
+      field: 'items',
+      userMessage: 'La venta supera el máximo de 200 líneas.',
+      suggestion: 'Divide la operación en dos ventas.'
+    });
+  }
 
   return items.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw badRequest('Cada producto de la venta no es válido.', { field: `items[${index}]` });
+    }
     if (!mongoose.isValidObjectId(item.productId)) {
       throw badRequest('Identificador de producto inválido.', { field: `items[${index}].productId` });
     }
@@ -94,7 +130,7 @@ function validateItems(items) {
   });
 }
 
-function emitStockEvents(io, item) {
+function emitStockEvents(io, item, { delta = -item.quantity, reason = 'SALE_OUT' } = {}) {
   if (!io) return;
 
   // Contrato nuevo y contrato histórico: mismo dato, dos nombres de evento.
@@ -105,12 +141,32 @@ function emitStockEvents(io, item) {
     name: item.name,
     stockCurrent: item.stockAfter,
     available: item.stockAfter,
-    delta: -item.quantity,
-    reason: 'SALE_OUT'
+    delta,
+    reason
   };
 
-  io.emit('stock_updated', productData);
-  io.emit('stock:updated', productData);
+  emitToAuthenticated(io, 'stock_updated', productData);
+  emitToAuthenticated(io, 'stock:updated', productData);
+}
+
+/** Reintento con la misma clave: devuelve la venta original y repara su factura. */
+async function replayCompletedSale(req, res, existing) {
+  let previous = await Sale.findById(existing.saleId).lean();
+  if (!previous) return null;
+
+  if (!previous.invoice) {
+    try {
+      await finalizeInvoice(req, previous);
+      previous = await Sale.findById(existing.saleId).lean();
+    } catch (error) {
+      console.error('[INVOICE] No se pudo reparar el comprobante en el reintento:', error.message);
+    }
+  }
+
+  return ok(res, {
+    data: previous ? serializeSale(previous) : null,
+    message: 'Venta ya registrada (reintento idempotente).'
+  });
 }
 
 export async function createSale(req, res, next) {
@@ -137,20 +193,10 @@ export async function createSale(req, res, next) {
         });
       }
       if (existing.status === 'COMPLETED') {
-        let previous = await Sale.findById(existing.saleId).lean();
-        // Si el proceso murió tras el commit, el reintento repara el comprobante.
-        if (previous && !previous.invoice) {
-          try {
-            await finalizeInvoice(req, previous);
-            previous = await Sale.findById(existing.saleId).lean();
-          } catch (error) {
-            console.error('[INVOICE] No se pudo reparar el comprobante en el reintento:', error.message);
-          }
-        }
-        return ok(res, {
-          data: previous ? serializeSale(previous) : null,
-          message: 'Venta ya registrada (reintento idempotente).'
-        });
+        const replayed = await replayCompletedSale(req, res, existing);
+        if (replayed) return replayed;
+        // El registro quedó huérfano: se descarta para permitir un reintento limpio.
+        await IdempotencyRecord.deleteOne({ _id: existing._id });
       }
       throw conflict('TRANSACTION_CONFLICT', 'La operación aún está en proceso.', {
         userMessage: 'Otra operación está en curso. Espera un momento e inténtalo de nuevo.',
@@ -161,6 +207,9 @@ export async function createSale(req, res, next) {
 
     const body = req.body || {};
     const items = validateItems(body.items);
+    if (body.customerEmail !== undefined && body.customerEmail !== null && body.customerEmail !== '') {
+      validateEmail(body.customerEmail);
+    }
     const currency = String(body.currency || 'USD').toUpperCase();
     if (!['USD', 'VES'].includes(currency)) {
       throw badRequest('Moneda no soportada.', {
@@ -287,9 +336,13 @@ export async function createSale(req, res, next) {
         const totalUSD = sum('total');
         const totalVES = toVes(totalUSD, rate.value);
 
-        const paidAmount = paymentInput.amount !== undefined
-          ? Number(paymentInput.amount)
-          : (currency === 'VES' ? totalVES : totalUSD);
+        const isCredit = payment.internal === 'CREDIT';
+        const amountDue = currency === 'VES' ? totalVES : totalUSD;
+        const paidAmount = isCredit
+          ? 0
+          : paymentInput.amount !== undefined
+            ? Number(paymentInput.amount)
+            : amountDue;
         if (!Number.isFinite(paidAmount) || paidAmount < 0) {
           throw badRequest('El monto pagado no es válido.', { field: 'payment.amount' });
         }
@@ -331,7 +384,7 @@ export async function createSale(req, res, next) {
             total: money(totalUSD, 'USD'),
             totalInVES: money(totalVES, 'VES', rateSnap),
             paid: money(paidAmount, currency, currency === 'VES' ? rateSnap : null),
-            change: money(paidAmount - (currency === 'VES' ? totalVES : totalUSD), currency, currency === 'VES' ? rateSnap : null)
+            change: money(isCredit ? 0 : round2(paidAmount - amountDue), currency, currency === 'VES' ? rateSnap : null)
           },
           exchangeSnapshot: rateSnap,
           payment: {
@@ -349,20 +402,26 @@ export async function createSale(req, res, next) {
           }
         };
 
-        if (payment.internal === 'CREDIT' && customer) {
-          const newBalance = round2(customer.credit.balanceUSD + totalUSD);
-          if (newBalance > customer.credit.limitUSD) {
-            throw conflict('CREDIT_LIMIT_EXCEEDED', 'Límite de crédito excedido.', {
-              userMessage: 'El cliente superó su límite de crédito disponible.',
-              suggestion: 'Reduce el monto o selecciona otro método de pago.'
-            });
-          }
-          await Customer.updateOne(
-            { _id: customer._id },
+        if (isCredit && customer) {
+          // Condicionamos al saldo leído: dos ventas simultáneas no pueden perder
+          // una actualización ni superar el límite de crédito.
+          const currentBalance = round2(Number(customer.credit?.balanceUSD || 0));
+          const newBalance = round2(currentBalance + totalUSD);
+          const creditUpdate = await Customer.updateOne(
+            {
+              _id: customer._id,
+              'credit.balanceUSD': currentBalance,
+              'credit.limitUSD': { $gte: newBalance }
+            },
             { $set: { 'credit.balanceUSD': newBalance } },
             { session }
           );
-          salePayload.totals.paid = money(0, 'USD');
+          if (creditUpdate.matchedCount !== 1) {
+            throw conflict('CREDIT_LIMIT_EXCEEDED', 'Límite de crédito excedido.', {
+              userMessage: 'El cliente superó su límite de crédito disponible.',
+              suggestion: 'Reduce el monto, revisa el saldo o selecciona otro método de pago.'
+            });
+          }
           salePayload.audit.creditBalanceAfter = newBalance;
         }
 
@@ -388,7 +447,7 @@ export async function createSale(req, res, next) {
 
     const io = req.app.get('io');
     if (io) {
-      io.emit('sale:created', {
+      emitToAuthenticated(io, 'sale:created', {
         saleId: String(saleDoc._id),
         number: saleDoc.number,
         total: saleDoc.totals.total
@@ -405,13 +464,12 @@ export async function createSale(req, res, next) {
       }));
     }
     if (key && recordCreated) {
+      // No dejamos un registro FAILED que bloquee todos los reintentos futuros:
+      // la venta no se persistió, así que la clave vuelve a estar disponible.
       try {
-        await IdempotencyRecord.updateOne(
-          { key },
-          { $set: { status: 'FAILED', error: error.message } }
-        );
+        await IdempotencyRecord.deleteOne({ key, status: 'PENDING' });
       } catch (logError) {
-        console.error('[IDEMPOTENCY] No se pudo registrar el fallo:', logError.message);
+        console.error('[IDEMPOTENCY] No se pudo liberar la clave:', logError.message);
       }
     }
     return next(error);
@@ -421,23 +479,55 @@ export async function createSale(req, res, next) {
 export async function listSales(req, res, next) {
   try {
     const filter = {};
-    if (req.query.status) filter.status = req.query.status;
-    if (req.query.customerId && mongoose.isValidObjectId(req.query.customerId)) filter.customerId = req.query.customerId;
-    if (req.query.sellerId) filter['audit.sellerId'] = req.query.sellerId;
-
-    if (req.query.from || req.query.to) {
-      filter['audit.createdAt'] = {};
-      if (req.query.from) filter['audit.createdAt'].$gte = new Date(req.query.from);
-      if (req.query.to) filter['audit.createdAt'].$lte = new Date(req.query.to);
+    if (req.query.status) {
+      const status = String(req.query.status).toUpperCase();
+      if (!['COMPLETED', 'VOID'].includes(status)) {
+        throw badRequest('Estado de venta no válido.', { field: 'status' });
+      }
+      filter.status = status;
+    }
+    if (req.query.customerId) {
+      if (!mongoose.isValidObjectId(req.query.customerId)) {
+        throw badRequest('Cliente no válido.', { field: 'customerId' });
+      }
+      filter.customerId = req.query.customerId;
     }
 
-    const page = Number(req.query.page || 1);
-    const limit = Number(req.query.limit || 20);
+    if (canManageSales(req.user)) {
+      if (req.query.sellerId) {
+        if (!mongoose.isValidObjectId(req.query.sellerId)) {
+          throw badRequest('Vendedor no válido.', { field: 'sellerId' });
+        }
+        filter['audit.sellerId'] = req.query.sellerId;
+      }
+    } else if (req.user?.role === 'CASHIER') {
+      // Un cajero jamás puede consultar las ventas de otro usuario.
+      filter['audit.sellerId'] = req.user.id;
+    } else {
+      throw forbidden('No tienes permiso para consultar ventas.', {
+        userMessage: 'Tu perfil no puede consultar el historial de ventas.',
+        suggestion: 'Solicita acceso a un supervisor.'
+      });
+    }
+
+    const from = dateParam(req.query.from, 'from');
+    const to = dateParam(req.query.to, 'to');
+    if (from && to && from > to) {
+      throw badRequest('La fecha desde no puede ser mayor que la fecha hasta.', { field: 'from' });
+    }
+    if (from || to) {
+      filter['audit.createdAt'] = {};
+      if (from) filter['audit.createdAt'].$gte = from;
+      if (to) filter['audit.createdAt'].$lte = to;
+    }
+
+    const page = positiveInt(req.query.page, 'page', 1);
+    const limit = positiveInt(req.query.limit, 'limit', 20);
     const total = await Sale.countDocuments(filter);
     const docs = await Sale.find(filter)
       .sort({ 'audit.createdAt': -1 })
-      .skip((Math.max(1, page) - 1) * Math.min(100, Math.max(1, limit)))
-      .limit(Math.min(100, Math.max(1, limit)))
+      .skip((page - 1) * limit)
+      .limit(limit)
       .lean();
 
     return ok(res, {
@@ -455,6 +545,7 @@ export async function downloadInvoice(req, res, next) {
     if (!mongoose.isValidObjectId(req.params.id)) throw notFound('Venta');
     const sale = await Sale.findById(req.params.id).lean();
     if (!sale) throw notFound('Venta');
+    assertSaleAccess(req, sale);
     const file = await ensureInvoiceFile(sale);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${file.fileName}"`);
@@ -469,6 +560,7 @@ export async function getSale(req, res, next) {
     if (!mongoose.isValidObjectId(req.params.id)) throw notFound('Venta');
     const sale = await Sale.findById(req.params.id).lean();
     if (!sale) throw notFound('Venta');
+    assertSaleAccess(req, sale);
     return ok(res, { data: serializeSale(sale) });
   } catch (error) {
     return next(error);
@@ -479,21 +571,39 @@ export async function voidSale(req, res, next) {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) throw notFound('Venta');
     const reason = String(req.body?.reason || '').trim();
-    if (reason.length < 4) {
-      throw badRequest('Se requiere un motivo de anulación.', { field: 'reason' });
+    if (reason.length < 4 || reason.length > 500) {
+      throw badRequest('Se requiere un motivo de anulación de 4 a 500 caracteres.', { field: 'reason' });
+    }
+
+    const role = req.user.role;
+    if (!SALES_MANAGER_ROLES.includes(role)) {
+      throw forbidden('Solo Administración, Supervisión o Finanzas pueden anular ventas.', {
+        userMessage: 'Tu perfil no puede anular ventas.',
+        suggestion: 'Solicita la intervención de un supervisor o administrador.'
+      });
     }
 
     const sale = await Sale.findById(req.params.id);
     if (!sale) throw notFound('Venta');
+    assertSaleAccess(req, sale);
     if (sale.status === 'VOID') {
       throw conflict('INVALID_STATUS', 'La venta ya está anulada.', {
         userMessage: 'Esta venta ya fue anulada.',
         suggestion: 'Consulta el historial de notas de crédito.'
       });
     }
+    if (sale.status !== 'COMPLETED') {
+      throw conflict('INVALID_STATUS', 'La venta no se puede anular.', {
+        userMessage: 'Esta venta no está en un estado que permita anularla.',
+        suggestion: 'Revisa el estado de la venta.'
+      });
+    }
 
-    const hours = (Date.now() - new Date(sale.audit.createdAt).getTime()) / 3_600_000;
-    if (hours > VOID_WINDOW_HOURS && req.user.role !== 'FINANCE') {
+    const createdAt = new Date(sale.audit?.createdAt || sale.createdAt);
+    const hours = Number.isNaN(createdAt.getTime())
+      ? 0
+      : (Date.now() - createdAt.getTime()) / 3_600_000;
+    if (hours > VOID_WINDOW_HOURS && role !== 'FINANCE') {
       throw conflict('VOID_WINDOW_CLOSED', 'Fuera del plazo de anulación.', {
         userMessage: 'El plazo para anular sin aprobación terminó.',
         suggestion: 'Solicita aprobación a Finanzas.'
@@ -501,11 +611,36 @@ export async function voidSale(req, res, next) {
     }
 
     let creditBalanceAfter = null;
+    const restoredItems = [];
     const session = await mongoose.startSession();
     try {
       await session.withTransaction(async () => {
+        restoredItems.length = 0;
+        creditBalanceAfter = null;
+
+        // Reclamo atómico de la anulación: dos peticiones concurrentes no pueden
+        // restaurar el stock dos veces.
+        const claimed = await Sale.updateOne(
+          { _id: sale._id, status: 'COMPLETED' },
+          {
+            $set: {
+              status: 'VOID',
+              'audit.voidedAt': new Date(),
+              'audit.voidReason': reason,
+              'audit.voidedBy': req.user.id
+            }
+          },
+          { session }
+        );
+        if (claimed.matchedCount !== 1) {
+          throw conflict('INVALID_STATUS', 'La venta ya está anulada.', {
+            userMessage: 'Esta venta ya fue anulada por otro usuario.',
+            suggestion: 'Consulta el historial de notas de crédito.'
+          });
+        }
+
         for (const item of sale.items) {
-          await increaseStock({
+          const restored = await increaseStock({
             productId: item.productId,
             quantity: item.quantity,
             lot: item.lot,
@@ -514,32 +649,49 @@ export async function voidSale(req, res, next) {
             saleId: sale._id,
             reason: 'SALE_VOID'
           });
+          restoredItems.push({
+            productId: item.productId,
+            sku: item.sku,
+            name: item.name,
+            quantity: item.quantity,
+            stockAfter: restored.stock.available
+          });
         }
 
         if (sale.customerId && sale.payment?.method === 'CREDIT') {
-          // Leer el saldo real dentro de la transacción: el snapshot nunca guardó este valor.
+          // Leer y actualizar el saldo real dentro de la transacción.
           const customer = await Customer.findOne({ _id: sale.customerId }).session(session).lean();
           if (customer) {
-            creditBalanceAfter = round2(
-              Math.max(0, Number(customer.credit?.balanceUSD || 0) - sale.totals.total.amount)
-            );
-            await Customer.updateOne(
-              { _id: sale.customerId },
+            const currentBalance = round2(Number(customer.credit?.balanceUSD || 0));
+            creditBalanceAfter = round2(Math.max(0, currentBalance - sale.totals.total.amount));
+            const creditUpdate = await Customer.updateOne(
+              { _id: sale.customerId, 'credit.balanceUSD': currentBalance },
               { $set: { 'credit.balanceUSD': creditBalanceAfter } },
+              { session }
+            );
+            if (creditUpdate.matchedCount !== 1) {
+              throw conflict('TRANSACTION_CONFLICT', 'El saldo del cliente cambió durante la anulación.', {
+                userMessage: 'El saldo del cliente cambió. Inténtalo de nuevo.',
+                suggestion: 'Reintenta la anulación.',
+                retryable: true
+              });
+            }
+            await Sale.updateOne(
+              { _id: sale._id },
+              { $set: { 'audit.creditBalanceAfter': creditBalanceAfter } },
               { session }
             );
           }
         }
-
-        sale.status = 'VOID';
-        sale.audit.voidedAt = new Date();
-        sale.audit.voidReason = reason;
-        if (creditBalanceAfter !== null) sale.audit.creditBalanceAfter = creditBalanceAfter;
-        await sale.save({ session });
       });
     } finally {
       await session.endSession();
     }
+
+    sale.status = 'VOID';
+    sale.audit.voidedAt = new Date();
+    sale.audit.voidedBy = req.user.id;
+    if (creditBalanceAfter !== null) sale.audit.creditBalanceAfter = creditBalanceAfter;
 
     // La factura ya entregada debe dejar de decir COMPLETED.
     try {
@@ -549,11 +701,15 @@ export async function voidSale(req, res, next) {
     }
 
     const io = req.app.get('io');
-    if (io && sale.audit?.sellerId) {
-      io.to(`user:${String(sale.audit.sellerId)}`).emit('sale:voided', {
-        saleId: String(sale._id),
-        status: 'VOID'
-      });
+    if (io) {
+      const payload = { saleId: String(sale._id), status: 'VOID' };
+      if (sale.audit?.sellerId) io.to(`user:${String(sale.audit.sellerId)}`).emit('sale:voided', payload);
+      for (const managerRole of SALES_MANAGER_ROLES) {
+        io.to(`role:${managerRole}`).emit('sale:voided', payload);
+      }
+      for (const item of restoredItems) {
+        emitStockEvents(io, item, { delta: item.quantity, reason: 'SALE_VOID' });
+      }
     }
 
     return ok(res, { data: serializeSale(sale), message: 'Venta anulada y stock restaurado.' });
@@ -567,6 +723,7 @@ export async function resendInvoice(req, res, next) {
     if (!mongoose.isValidObjectId(req.params.id)) throw notFound('Venta');
     const sale = await Sale.findById(req.params.id).lean();
     if (!sale) throw notFound('Venta');
+    assertSaleAccess(req, sale);
 
     const to = sale.customerSnapshot?.email;
     if (!to) {

@@ -2,7 +2,13 @@ import mongoose from 'mongoose';
 import Product, { PRODUCT_CATEGORIES } from './product.model.js';
 import { ok, created, paginate } from '../../helpers/response.js';
 import { badRequest, notFound, conflict } from '../../helpers/errors.js';
-import { validateBarcode, requireString, requirePositiveNumber } from '../../helpers/validators.js';
+import {
+  validateBarcode,
+  requireString,
+  requirePositiveNumber,
+  requireNumber,
+  positiveInt
+} from '../../helpers/validators.js';
 import { getActiveRate } from '../../services/exchange-rate.service.js';
 import { serializeProduct } from '../../helpers/serializers.js';
 import { decrementStock, increaseStock } from '../../services/inventory.service.js';
@@ -17,19 +23,28 @@ function assertObjectId(id) {
   if (!mongoose.isValidObjectId(id)) throw notFound('Producto');
 }
 
+function parseBatchDate(value, field) {
+  if (value === undefined || value === null || value === '') return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw badRequest('La fecha del lote no es válida.', { field });
+  }
+  return date;
+}
+
 function parseBatches(batches = []) {
   if (!Array.isArray(batches)) throw badRequest('El campo batches debe ser una lista.', { field: 'batches' });
-  return batches.map((batch) => {
-    const lot = requireString(batch.lot, 'batch.lot');
-    const quantity = Number(batch.quantity);
-    if (!Number.isFinite(quantity) || quantity < 0) {
-      throw badRequest('La cantidad del lote debe ser mayor o igual a cero.', { field: 'batch.quantity' });
+  return batches.map((batch, index) => {
+    if (!batch || typeof batch !== 'object' || Array.isArray(batch)) {
+      throw badRequest('Cada lote debe ser un objeto.', { field: `batches[${index}]` });
     }
+    const lot = requireString(batch.lot, 'batch.lot');
+    const quantity = requireNumber(batch.quantity, `batches[${index}].quantity`, { min: 0 });
     return {
       lot,
       quantity,
-      manufacturingDate: batch.manufacturingDate ? new Date(batch.manufacturingDate) : null,
-      expirationDate: batch.expirationDate ? new Date(batch.expirationDate) : null
+      manufacturingDate: parseBatchDate(batch.manufacturingDate, `batches[${index}].manufacturingDate`),
+      expirationDate: parseBatchDate(batch.expirationDate, `batches[${index}].expirationDate`)
     };
   });
 }
@@ -48,8 +63,8 @@ function resolveCategory(value) {
 
 export async function list(req, res, next) {
   try {
-    const page = Number(req.query.page || 1);
-    const limit = Number(req.query.limit || 20);
+    const page = positiveInt(req.query.page, 'page', 1);
+    const limit = positiveInt(req.query.limit, 'limit', 20);
     const filter = {};
 
     if (req.query.active !== undefined) filter['flags.active'] = req.query.active === 'true';
@@ -115,7 +130,7 @@ export async function lowStock(req, res, next) {
 
 export async function expiring(req, res, next) {
   try {
-    const days = Number(req.query.days || 30);
+    const days = requireNumber(req.query.days ?? 30, 'days', { min: 0, max: 3650 });
     const limitDate = new Date(Date.now() + days * 86_400_000);
     const docs = await Product.find({
       'flags.active': true,
@@ -177,15 +192,19 @@ export async function create(req, res, next) {
       pricing: {
         priceIncludesTax: Boolean(body.priceIncludesTax),
         tax: body.taxType || 'IVA_GENERAL',
-        costUSD: Number(body.costUSD ?? 0),
+        costUSD: requireNumber(body.costUSD ?? 0, 'costUSD', { min: 0 }),
         priceUSD: requirePositiveNumber(body.priceUSD, 'priceUSD'),
-        manualPriceVES: body.manualPriceVES !== undefined ? Number(body.manualPriceVES) : null,
-        promotionPriceUSD: body.promotionPriceUSD !== undefined ? Number(body.promotionPriceUSD) : null,
+        manualPriceVES:
+          body.manualPriceVES !== undefined ? requireNumber(body.manualPriceVES, 'manualPriceVES', { min: 0 }) : null,
+        promotionPriceUSD:
+          body.promotionPriceUSD !== undefined
+            ? requireNumber(body.promotionPriceUSD, 'promotionPriceUSD', { min: 0 })
+            : null,
         mode: body.pricingMode || 'AUTO_BCV'
       },
       stock: {
-        available: Number(body.stockCurrent ?? body.stock ?? 0),
-        minimum: Number(body.stockMinimum ?? body.minimumStock ?? 0),
+        available: requireNumber(body.stockCurrent ?? body.stock ?? 0, 'stockCurrent', { min: 0 }),
+        minimum: requireNumber(body.stockMinimum ?? body.minimumStock ?? 0, 'stockMinimum', { min: 0 }),
         unit: body.unit || 'UN'
       },
       batches: parseBatches(body.batches),
@@ -214,7 +233,7 @@ export async function update(req, res, next) {
   try {
     assertObjectId(req.params.id);
     const body = req.body || {};
-    const updates = { audit: { updatedBy: req.user.id } };
+    const updates = { 'audit.updatedBy': req.user.id };
 
     // Acepta campos planos y la forma anidada `pricing` descrita en el contrato.
     const pricing = body.pricing && typeof body.pricing === 'object' ? body.pricing : {};
@@ -225,13 +244,19 @@ export async function update(req, res, next) {
     if (body.category !== undefined) updates.category = resolveCategory(body.category);
     if (body.imageUrl !== undefined) updates.imageUrl = body.imageUrl || null;
     if (value('priceUSD') !== undefined) updates['pricing.priceUSD'] = requirePositiveNumber(value('priceUSD'), 'priceUSD');
-    if (value('costUSD') !== undefined) updates['pricing.costUSD'] = Number(value('costUSD'));
-    if (value('manualPriceVES') !== undefined) updates['pricing.manualPriceVES'] = Number(value('manualPriceVES'));
-    if (value('promotionPriceUSD') !== undefined) updates['pricing.promotionPriceUSD'] = Number(value('promotionPriceUSD'));
+    if (value('costUSD') !== undefined) {
+      updates['pricing.costUSD'] = requireNumber(value('costUSD'), 'costUSD', { min: 0 });
+    }
+    if (value('manualPriceVES') !== undefined) {
+      updates['pricing.manualPriceVES'] = requireNumber(value('manualPriceVES'), 'manualPriceVES', { min: 0 });
+    }
+    if (value('promotionPriceUSD') !== undefined) {
+      updates['pricing.promotionPriceUSD'] = requireNumber(value('promotionPriceUSD'), 'promotionPriceUSD', { min: 0 });
+    }
     if (value('taxType') !== undefined) updates['pricing.tax'] = value('taxType');
     if (value('priceIncludesTax') !== undefined) updates['pricing.priceIncludesTax'] = Boolean(value('priceIncludesTax'));
     if (body.stockMinimum !== undefined || body.minimumStock !== undefined) {
-      updates['stock.minimum'] = Number(body.stockMinimum ?? body.minimumStock);
+      updates['stock.minimum'] = requireNumber(body.stockMinimum ?? body.minimumStock, 'stockMinimum', { min: 0 });
     }
     if (body.unit !== undefined) updates['stock.unit'] = String(body.unit);
     if (body.barcode !== undefined) updates.barcode = validateBarcode(body.barcode);
