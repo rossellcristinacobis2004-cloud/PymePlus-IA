@@ -1,0 +1,14 @@
+📁 MI-PROYECTO/
+├── 📄 AGENTS.md                              <-- Guía Maestra de Desarrollo
+├── 📁 context/
+│   └── 📄 Project_Architecture_Overview.md   <-- Visión general y reglas de negocio
+├── 📁 memory/
+│   └── 📄 Project_Ledger_and_Learnings.md    <-- Historial de versiones y lecciones
+├── 📁 projects/                              <-- Código fuente (backend, frontend, mobile)
+└── 📁 skills/                                <-- Guías metodológicas "Saber Hacer"
+    ├── 📄 UI_UX_Design_System.md
+    ├── 📄 Backend_Architecture_CRUD.md
+    ├── 📄 Frontend_Angular22_Skills.md
+    ├── 📄 Mobile_Kotlin_Android.md
+    ├── 📄 Validations_Security.md
+    └── 📄 Testing_Deployment_Skills.md

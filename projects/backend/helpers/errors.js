@@ -1,0 +1,37 @@
+/** Error de dominio con formato compatible con el sobre de api_contracts.md. */
+export class ApiError extends Error {
+  constructor(status, code, message, options = {}) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.userMessage = options.userMessage || message;
+    this.suggestion = options.suggestion || 'Revisa los datos e inténtalo de nuevo.';
+    this.field = options.field || null;
+    this.retryable = options.retryable ?? false;
+  }
+}
+
+export const badRequest = (message, options = {}) =>
+  new ApiError(400, 'VALIDATION_ERROR', message, options);
+
+export const unauthorized = (message = 'Credenciales inválidas.') =>
+  new ApiError(401, 'UNAUTHORIZED', message, {
+    userMessage: 'Debes iniciar sesión para continuar.',
+    suggestion: 'Ingresa con tu usuario y contraseña.'
+  });
+
+export const forbidden = (message = 'No tienes permiso para esta acción.') =>
+  new ApiError(403, 'FORBIDDEN', message, {
+    userMessage: 'Tu usuario no tiene permiso para realizar esta acción.',
+    suggestion: 'Solicita permisos a un administrador.'
+  });
+
+export const notFound = (resource = 'Recurso') =>
+  new ApiError(404, 'NOT_FOUND', `${resource} no encontrado.`, {
+    userMessage: `No encontramos ${resource.toLowerCase()}.`,
+    suggestion: 'Verifica el identificador e inténtalo de nuevo.'
+  });
+
+export const conflict = (code, message, options = {}) =>
+  new ApiError(409, code, message, options);

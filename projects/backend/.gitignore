@@ -1,0 +1,33 @@
+# Dependencias
+node_modules/
+
+# Secretos y entorno
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/*
+!logs/.gitkeep
+*.log
+npm-debug.log*
+
+# Archivos subidos (se versiona solo la estructura)
+uploads/*
+!uploads/.gitkeep
+!uploads/images/
+!uploads/images/.gitkeep
+!uploads/documents/
+!uploads/documents/.gitkeep
+!uploads/apks/
+!uploads/apks/.gitkeep
+
+# Sistema operativo / editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Cobertura y temporales
+coverage/
+.tmp/

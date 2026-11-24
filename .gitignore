@@ -1,0 +1,30 @@
+# Secretos
+.env
+.env.*
+!.env.example
+
+# Dependencias
+node_modules/
+
+# Artefactos generados
+*.log
+coverage/
+.tmp/
+uploads/*
+!uploads/.gitkeep
+!**/uploads/
+!**/uploads/.gitkeep
+
+# Facturas generadas en pruebas (no versionar)
+projects/backend/uploads/documents/invoices/
+
+# Respaldos binarios / temporales
+backup.doc
+*.bak
+*.tmp
+
+# Sistema operativo y editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
