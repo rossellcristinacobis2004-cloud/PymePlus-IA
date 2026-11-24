@@ -29,6 +29,10 @@ export class ShellComponent implements OnDestroy {
     const role = this.user()?.role;
     return role === 'ADMIN' || role === 'Administrador' || role === 'SUPERVISOR' || role === 'FINANCE';
   });
+  readonly canManageUsers = computed(() => {
+    const role = this.user()?.role;
+    return role === 'ADMIN' || role === 'Administrador';
+  });
 
   private readonly applyTheme = effect(() => {
     const theme = this.theme();

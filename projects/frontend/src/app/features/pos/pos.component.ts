@@ -1,6 +1,6 @@
 import { afterNextRender, Component, computed, ElementRef, inject, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { forkJoin } from 'rxjs';
+import { firstValueFrom, forkJoin } from 'rxjs';
 
 import { ApiService } from '../../core/services/api.service';
 import { TokenService } from '../../core/services/token.service';
@@ -16,6 +16,31 @@ import { formatMoney, round2 } from '../../shared/money';
 import { CartStore } from './cart.store';
 
 type RateStatus = 'ACTIVE' | 'STALE' | 'EXPIRED';
+
+export type CustomerDocumentType = 'RIF' | 'CI' | 'PASSPORT';
+
+export const CUSTOMER_DOCUMENT_TYPES: ReadonlyArray<CustomerDocumentType> = ['RIF', 'CI', 'PASSPORT'];
+
+/** Mismo contrato que validateDocument() del backend (RIF/CI/pasaporte venezolano). */
+export function isValidCustomerDocument(type: CustomerDocumentType, value: string): boolean {
+  const number = String(value || '').trim().toUpperCase();
+  if (type === 'RIF') return /^[JGVPE]-\d{8}-\d$/.test(number);
+  if (type === 'CI') return /^[VE]-\d{7,8}$/.test(number);
+  return /^(?=.*[A-Z0-9])[A-Z0-9-]{6,20}$/.test(number);
+}
+
+interface CustomerLookup {
+  id: string;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+}
+
+function documentHint(type: CustomerDocumentType): string {
+  if (type === 'RIF') return 'Formato esperado: J-12345678-9.';
+  if (type === 'CI') return 'Formato esperado: V-12345678.';
+  return 'Use entre 6 y 20 caracteres alfanuméricos.';
+}
 
 @Component({
   selector: 'app-pos',
@@ -49,6 +74,15 @@ export class PosComponent {
   readonly lastSale = signal<Sale | null>(null);
   readonly idempotencyKey = signal<string | null>(null);
 
+  // Cliente obligatorio en TODA venta: se registra y viaja en la factura.
+  readonly documentTypes = CUSTOMER_DOCUMENT_TYPES;
+  readonly customerId = signal<string | null>(null);
+  readonly customerName = signal('');
+  readonly customerDocumentType = signal<CustomerDocumentType>('RIF');
+  readonly customerDocumentNumber = signal('');
+  readonly customerEmail = signal('');
+  readonly customerPhone = signal('');
+
   readonly filteredProducts = computed(() => {
     const term = this.search().trim().toLowerCase();
     if (!term) return this.products().slice(0, 12);
@@ -75,6 +109,36 @@ export class PosComponent {
 
   readonly canChargeVes = computed(() => this.rateStatus() === 'ACTIVE');
   readonly canCharge = computed(() => this.rateStatus() !== 'EXPIRED');
+
+  readonly customerValid = computed(() => {
+    const name = this.customerName().trim();
+    const type = this.customerDocumentType();
+    const number = this.customerDocumentNumber().trim();
+    return name.length >= 2 && isValidCustomerDocument(type, number);
+  });
+
+  readonly customerError = computed<string | null>(() => {
+    const name = this.customerName().trim();
+    const number = this.customerDocumentNumber().trim();
+    const type = this.customerDocumentType();
+    if (!name && !number) return null;
+    if (name.length < 2) return 'Ingresa el nombre del cliente (mínimo 2 caracteres).';
+    if (!number) return 'Ingresa el número de documento.';
+    if (!isValidCustomerDocument(type, number)) {
+      return `El documento no es válido. ${documentHint(type)}`;
+    }
+    return null;
+  });
+
+  readonly chargeDisabled = computed(
+    () =>
+      this.submitting() ||
+      this.cart.isEmpty() ||
+      !this.canCharge() ||
+      (this.currency() === 'VES' && !this.canChargeVes()) ||
+      this.paidAmount() + 0.001 < this.totals().total ||
+      !this.customerValid(),
+  );
 
   constructor() {
     afterNextRender(() => this.searchInput()?.nativeElement.focus());
@@ -168,7 +232,56 @@ export class PosComponent {
     this.paidAmount.set(this.totals().total);
   }
 
-  charge(): void {
+  onCustomerDocumentInput(value: string): void {
+    // Los documentos venezolanos se normalizan a mayúsculas; el backend valida el formato.
+    this.customerDocumentNumber.set(String(value || '').toUpperCase());
+    this.customerId.set(null);
+  }
+
+  onCustomerDocumentTypeChange(value: string): void {
+    const type = String(value || '').toUpperCase() as CustomerDocumentType;
+    if (!CUSTOMER_DOCUMENT_TYPES.includes(type)) return;
+    this.customerDocumentType.set(type);
+    this.customerId.set(null);
+    this.lookupCustomer();
+  }
+
+  /** Si el documento ya existe, se reutiliza el cliente registrado. */
+  lookupCustomer(): void {
+    const number = this.customerDocumentNumber().trim().toUpperCase();
+    if (!number || !isValidCustomerDocument(this.customerDocumentType(), number)) return;
+
+    this.api.get<CustomerLookup[]>(`/customers?documentNumber=${encodeURIComponent(number)}`).subscribe({
+      next: (customers) => {
+        const found = customers[0];
+        if (!found) {
+          this.customerId.set(null);
+          return;
+        }
+        this.customerId.set(found.id);
+        if (this.customerName().trim().length < 2) this.customerName.set(found.name);
+        if (!this.customerEmail().trim() && found.email) this.customerEmail.set(found.email);
+        if (!this.customerPhone().trim() && found.phone) this.customerPhone.set(found.phone);
+        this.toasts.info(`Cliente ${found.name} cargado para la factura.`);
+      },
+      error: (error: unknown) => {
+        // La búsqueda es una comodidad: el alta se resuelve igual al cobrar.
+        const apiError = toApiError(error);
+        this.toasts.warning(apiError.userMessage, apiError.suggestion);
+      },
+    });
+  }
+
+  private resetCustomer(): void {
+    this.customerId.set(null);
+    this.customerName.set('');
+    this.customerDocumentType.set('RIF');
+    this.customerDocumentNumber.set('');
+    this.customerEmail.set('');
+    this.customerPhone.set('');
+  }
+
+  async charge(): Promise<void> {
     const lines = this.cart.lines();
     if (lines.length === 0) {
       this.toasts.error('Agrega productos antes de cobrar.', 'Escanea un código o busca un producto.');
@@ -186,45 +299,74 @@ export class PosComponent {
       this.toasts.error('El monto pagado es menor al total de la venta.');
       return;
     }
+    if (!this.customerValid()) {
+      this.toasts.error(
+        'Completa el nombre y el documento del cliente para facturar.',
+        this.customerError(),
+      );
+      return;
+    }
 
     if (!this.idempotencyKey()) this.idempotencyKey.set(crypto.randomUUID());
     this.submitting.set(true);
 
-    const payload = {
-      currency: this.currency(),
-      paymentMethod: this.paymentMethod(),
-      customerName: 'Consumidor final',
-      items: lines.map((line) => ({
-        productId: line.product.id,
-        quantity: line.quantity,
-        discountPercent: line.discountPercent,
-        lot: line.lot,
-      })),
-      payment: {
-        amount: this.paidAmount(),
-        reference: null,
-      },
-    };
+    try {
+      let customerId = this.customerId();
+      if (!customerId) {
+        const customer = await firstValueFrom(
+          this.api.post<CustomerLookup>('/customers', {
+            name: this.customerName().trim(),
+            documentType: this.customerDocumentType(),
+            documentNumber: this.customerDocumentNumber().trim().toUpperCase(),
+            email: this.customerEmail().trim() || null,
+            phone: this.customerPhone().trim() || null,
+          }),
+        );
+        customerId = customer.id;
+        // Se conserva si la venta falla: el reintento con la misma clave reutiliza el cliente.
+        this.customerId.set(customerId);
+      }
 
-    this.api
-      .post<Sale>('/sales', payload, {
-        headers: { 'X-Idempotency-Key': this.idempotencyKey() as string },
-      })
-      .subscribe({
-        next: (sale) => {
-          this.lastSale.set(sale);
-          this.cart.clear();
-          this.checkoutOpen.set(false);
-          this.paidAmount.set(0);
-          this.idempotencyKey.set(null);
-          this.toasts.success(`Venta ${sale.number} registrada correctamente.`);
-        },
-        error: (error: unknown) => {
-          const apiError = toApiError(error);
-          this.toasts.error(apiError.userMessage, apiError.suggestion);
-        },
-        complete: () => this.submitting.set(false),
-      });
+      const sale = await firstValueFrom(
+        this.api.post<Sale>(
+          '/sales',
+          {
+            currency: this.currency(),
+            paymentMethod: this.paymentMethod(),
+            customerId,
+            customerName: this.customerName().trim(),
+            customerDocumentType: this.customerDocumentType(),
+            customerDocumentNumber: this.customerDocumentNumber().trim().toUpperCase(),
+            customerEmail: this.customerEmail().trim() || null,
+            customerPhone: this.customerPhone().trim() || null,
+            items: lines.map((line) => ({
+              productId: line.product.id,
+              quantity: line.quantity,
+              discountPercent: line.discountPercent,
+              lot: line.lot,
+            })),
+            payment: {
+              amount: this.paidAmount(),
+              reference: null,
+            },
+          },
+          { headers: { 'X-Idempotency-Key': this.idempotencyKey() as string } },
+        ),
+      );
+
+      this.lastSale.set(sale);
+      this.cart.clear();
+      this.checkoutOpen.set(false);
+      this.paidAmount.set(0);
+      this.idempotencyKey.set(null);
+      this.resetCustomer();
+      this.toasts.success(`Venta ${sale.number} registrada correctamente.`);
+    } catch (error: unknown) {
+      const apiError = toApiError(error);
+      this.toasts.error(apiError.userMessage, apiError.suggestion);
+    } finally {
+      this.submitting.set(false);
+    }
   }
 
   downloadInvoice(): void {
@@ -250,6 +392,7 @@ export class PosComponent {
   newSale(): void {
     this.lastSale.set(null);
     this.search.set('');
+    this.resetCustomer();
     this.syncPaidToTotal();
   }
 

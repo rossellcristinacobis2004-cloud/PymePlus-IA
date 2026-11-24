@@ -19,7 +19,7 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: min(460px, calc(100vw - 2rem));
+  width: min(520px, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
   overflow-y: auto;
   border-radius: 0.75rem;
@@ -34,4 +34,11 @@
 
 .checkout-modal__body {
   padding: 1rem 1.25rem 1.25rem;
+}
+
+.customer-block {
+  padding: 0.85rem;
+  border: 1px solid var(--brand-border-light);
+  border-radius: 0.6rem;
+  background: var(--bs-tertiary-bg, rgba(13, 110, 253, 0.03));
 }

@@ -240,3 +240,25 @@ Registro de errores y parches aplicados.
 - **Causa:** párrafo con `projects/backend/.env` en `login.component.html`, además de una tarjeta pequeña y sin presencia visual.
 - **Solución:** eliminar el texto, rediseñar con tarjeta centrada, logo, encabezado, iconos en los campos, pie sobrio y soporte dark/móvil. Prueba regresiva que verifica que no aparezcan «credenciales» ni `.env`.
 
+## 2026-11-24 — Usuarios demo y cliente obligatorio
+
+### El POS facturaba como «Consumidor final»
+- **Causa:** `charge()` enviaba `customerName: 'Consumidor final'` y el backend solo exigía cliente cuando `payment.method === 'CREDIT'`; `customerRUT` era opcional y el PDF mostraba `Documento: N/A`.
+- **Solución:** `resolveSaleCustomer()` valida nombre + `RIF`/`CI`/`PASSPORT`, reutiliza o crea el `Customer` antes de abrir la transacción y guarda `customerSnapshot`. El POS bloquea «Cobrar» hasta que el documento sea válido, busca/crea el cliente y envía `customerId`. El PDF imprime el tipo y número; el historial de ventas dejó de usar el texto «Consumidor final» como fallback.
+
+### La integración fallaba al buscar `customerSnapshot` en la respuesta
+- **Causa:** `serializeSale()` expone el snapshot como `customer` (y virtuales `customerName`/`customerRUT`), no con el nombre del campo del modelo.
+- **Solución:** la prueba verifica `body.data.customer` y `customer.id`; se añadió además una venta anónima que debe responder `400` con `field: 'customerName'`.
+
+### La prueba «último administrador» esperaba 409 pero obtenía 400
+- **Causa:** la guarda de auto-bloqueo se evalúa antes que la de «debe quedar un admin activo», y con un solo administrador el actor siempre es ese usuario.
+- **Solución:** la regresión comprobó el comportamiento real y legible: `400` con `field: 'role'` al intentar degradarse. La guarda de último administrador se conserva como defensa para escenarios con varios administradores.
+
+### Un listado de usuarios con `lean()` podía filtrar secretos por omisión
+- **Causa:** `toSafeObject()` es un método de documento; con `.lean()` no existe y cualquier `select('+password')` accidental dejaría el hash en la respuesta.
+- **Solución:** las rutas de `/api/users` cargan documentos Mongoose (con `select('+password')` solo al cambiar contraseña) y siempre serializan con `toSafeObject()`. La integración asevera que ningún usuario devuelto contiene la clave `password`.
+
+### Las passwords demo no podían quedar solo en `.env` sin romper el seeder
+- **Causa:** el seeder no tenía variables para los cuatro roles nuevos y no podía imprimir contraseñas generadas en consola.
+- **Solución:** `.env.example` documenta `SEED_<ROL>_PASSWORD`; el seeder exige esas variables (mínimo 8 caracteres) y falla nombrando la variable faltante. Los valores reales se escribieron en `.env` sin mostrarlos en logs ni en el chat.
+

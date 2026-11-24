@@ -15,7 +15,9 @@ import { calculateLine, resolveTaxType } from '../../helpers/tax.js';
 import { resolvePayment } from '../../helpers/payment.js';
 import {
   parseCustomerRUT,
+  validateDocument,
   validateEmail,
+  requireString,
   positiveInt,
   dateParam
 } from '../../helpers/validators.js';
@@ -169,6 +171,86 @@ async function replayCompletedSale(req, res, existing) {
   });
 }
 
+/** El documento viene sin tipo explícito en el contrato histórico (customerRUT). */
+function inferDocumentType(documentNumber) {
+  const text = String(documentNumber || '').toUpperCase();
+  if (/^[JGVPE]-\d{8}-\d$/.test(text)) return 'RIF';
+  if (/^[VE]-\d{7,8}$/.test(text)) return 'CI';
+  return 'PASSPORT';
+}
+
+/**
+ * Toda venta debe tener un cliente identificado. Si el front envía customerId se
+ * usa ese registro; si no, se exige nombre + documento y se da de alta al cliente.
+ * El alta ocurre antes de la transacción: no bloquea ni revierte el stock.
+ */
+async function resolveSaleCustomer(body, paymentInternal) {
+  let customer;
+
+  if (body.customerId) {
+    if (!mongoose.isValidObjectId(body.customerId)) {
+      throw badRequest('Cliente inválido.', { field: 'customerId' });
+    }
+    customer = await Customer.findOne({ _id: body.customerId, active: true }).lean();
+    if (!customer) throw notFound('Cliente');
+  } else {
+    const name = requireString(body.customerName ?? body.name, 'customerName', { min: 2, max: 120 });
+    const rawType = body.customerDocumentType ?? body.documentType;
+    const rawNumber = body.customerDocumentNumber ?? body.documentNumber ?? body.customerRUT;
+    if (!rawNumber) {
+      throw badRequest('La venta requiere el documento del cliente.', {
+        field: 'documentNumber',
+        userMessage: 'Para facturar necesitas el documento del cliente.',
+        suggestion: 'Ingresa un RIF, cédula o pasaporte válido.'
+      });
+    }
+
+    const document = rawType
+      ? validateDocument(rawType, rawNumber)
+      : (() => {
+          const documentNumber = parseCustomerRUT(rawNumber);
+          return { documentType: inferDocumentType(documentNumber), documentNumber };
+        })();
+
+    const email = body.customerEmail ? validateEmail(body.customerEmail) : null;
+    const phone = body.customerPhone ? String(body.customerPhone).trim().slice(0, 50) || null : null;
+
+    customer = await Customer.findOne({ documentNumber: document.documentNumber }).lean();
+    if (customer && customer.active === false) {
+      throw conflict('INACTIVE_CUSTOMER', 'El cliente está dado de baja.', {
+        userMessage: 'Ese documento pertenece a un cliente dado de baja.',
+        suggestion: 'Verifica el documento o registra un cliente nuevo.'
+      });
+    }
+
+    if (!customer) {
+      try {
+        customer = await Customer.create({
+          name,
+          documentType: document.documentType,
+          documentNumber: document.documentNumber,
+          email,
+          phone
+        });
+      } catch (error) {
+        // Carrera de dos cajeros dando de alta el mismo documento: se reutiliza el registro.
+        if (error.code !== 11000) throw error;
+        customer = await Customer.findOne({ documentNumber: document.documentNumber }).lean();
+        if (!customer) throw error;
+      }
+    }
+  }
+
+  if (paymentInternal === 'CREDIT' && !customer.credit?.enabled) {
+    throw conflict('CREDIT_LIMIT_EXCEEDED', 'El cliente no tiene crédito habilitado.', {
+      userMessage: 'El cliente no tiene crédito habilitado.',
+      suggestion: 'Selecciona otro método de pago.'
+    });
+  }
+
+  return customer;
+}
+
 export async function createSale(req, res, next) {
   const key = String(req.headers['x-idempotency-key'] || '').trim();
   let recordCreated = false;
@@ -227,22 +309,8 @@ export async function createSale(req, res, next) {
     assertCurrencyAllowed(rate, currency);
     const rateSnap = snapshot(rate);
 
-    let customer = null;
-    if (body.customerId) {
-      if (!mongoose.isValidObjectId(body.customerId)) throw badRequest('Cliente inválido.', { field: 'customerId' });
-      customer = await Customer.findOne({ _id: body.customerId, active: true }).lean();
-      if (!customer) throw notFound('Cliente');
-      if (payment.internal === 'CREDIT' && !customer.credit.enabled) {
-        throw conflict('CREDIT_LIMIT_EXCEEDED', 'El cliente no tiene crédito habilitado.', {
-          userMessage: 'El cliente no tiene crédito habilitado.',
-          suggestion: 'Selecciona otro método de pago.'
-        });
-      }
-    } else if (payment.internal === 'CREDIT') {
-      throw badRequest('El pago a crédito requiere un cliente.', { field: 'customerId' });
-    }
-
-    const customerRUT = parseCustomerRUT(body.customerRUT || customer?.documentNumber);
+    const customer = await resolveSaleCustomer(body, payment.internal);
+    const customerRUT = parseCustomerRUT(customer.documentNumber);
     const session = await mongoose.startSession();
     let saleDoc;
 
@@ -349,24 +417,15 @@ export async function createSale(req, res, next) {
 
         const number = await nextSequence('VTA', session);
 
-        const customerSnapshot = customer
-          ? {
-              id: String(customer._id),
-              name: customer.name,
-              documentType: customer.documentType,
-              documentNumber: customer.documentNumber,
-              email: customer.email || null,
-              phone: customer.phone || null,
-              creditBalanceBefore: round2(customer.credit?.balanceUSD || 0)
-            }
-          : {
-              name: body.customerName || 'Consumidor final',
-              documentType: customerRUT ? (customerRUT.includes('-') && customerRUT.split('-').length === 3 ? 'RIF' : 'CI') : null,
-              documentNumber: customerRUT || null,
-              email: body.customerEmail || null,
-              phone: null,
-              creditBalanceBefore: 0
-            };
+        const customerSnapshot = {
+          id: String(customer._id),
+          name: customer.name,
+          documentType: customer.documentType,
+          documentNumber: customer.documentNumber,
+          email: customer.email || null,
+          phone: customer.phone || null,
+          creditBalanceBefore: round2(customer.credit?.balanceUSD || 0)
+        };
 
         const salePayload = {
           number,

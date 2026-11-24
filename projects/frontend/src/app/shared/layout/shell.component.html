@@ -35,6 +35,12 @@
           Reportes
         </a>
       }
+      @if (canManageUsers()) {
+        <a routerLink="/usuarios" routerLinkActive="active" class="nav-link" (click)="closeSidebar()">
+          <i class="bi bi-person-gear me-2"></i>
+          Usuarios
+        </a>
+      }
     </nav>
 
     <div class="mt-auto small text-secondary pt-4">

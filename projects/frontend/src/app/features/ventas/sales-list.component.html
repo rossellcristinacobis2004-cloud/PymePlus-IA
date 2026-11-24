@@ -50,7 +50,7 @@
             @for (sale of sales(); track sale.id) {
               <tr>
                 <td class="fw-semibold text-nowrap">{{ sale.invoiceNumber }}</td>
-                <td>{{ sale.customerName || 'Consumidor final' }}</td>
+                <td>{{ sale.customerName || '—' }}</td>
                 <td class="small text-secondary text-nowrap">{{ formatSaleDate(sale.createdAt) }}</td>
                 <td class="small">{{ sale.paymentMethod }}</td>
                 <td class="text-end tabular-nums">{{ formatMoney(sale.totalUSD, 'USD') }}</td>

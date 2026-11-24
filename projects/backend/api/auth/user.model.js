@@ -4,6 +4,9 @@ import bcrypt from 'bcryptjs';
 // `ADMIN` es el código persistido del rol "Administrador" definido en system_context.md §2.2.
 const ROLES = ['ADMIN', 'SUPERVISOR', 'CASHIER', 'WAREHOUSE', 'FINANCE'];
 
+/** Lista canónica exportada para validar altas y cambios de rol desde el panel ADMIN. */
+export const USER_ROLES = ROLES;
+
 const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },

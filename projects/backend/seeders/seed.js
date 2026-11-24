@@ -10,6 +10,31 @@ const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL || 'admin@pymeplus.local';
 const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'Admin12345';
 const BCV_RATE = Number(process.env.FALLBACK_BCV_RATE || 36);
 
+// Las contraseñas se leen SOLO del entorno. Nunca se imprimen ni se versionan.
+const DEMO_USER_DEFINITIONS = [
+  { prefix: 'SEED_CASHIER', role: 'CASHIER', name: 'Cajero Demo', email: 'cashier@pymeplus.local' },
+  { prefix: 'SEED_SUPERVISOR', role: 'SUPERVISOR', name: 'Supervisor Demo', email: 'supervisor@pymeplus.local' },
+  { prefix: 'SEED_WAREHOUSE', role: 'WAREHOUSE', name: 'Almacén Demo', email: 'warehouse@pymeplus.local' },
+  { prefix: 'SEED_FINANCE', role: 'FINANCE', name: 'Finanzas Demo', email: 'finance@pymeplus.local' }
+];
+
+function readDemoUsers() {
+  return DEMO_USER_DEFINITIONS.map((definition) => {
+    const password = process.env[`${definition.prefix}_PASSWORD`];
+    if (!password || password.length < 8) {
+      throw new Error(
+        `Falta ${definition.prefix}_PASSWORD (mínimo 8 caracteres) en el entorno del seeder.`
+      );
+    }
+    return {
+      role: definition.role,
+      name: definition.name,
+      email: process.env[`${definition.prefix}_EMAIL`] || definition.email,
+      password
+    };
+  });
+}
+
 async function seed() {
   // El seeder resetea credenciales y crea datos de demostración: nunca en producción.
   if (process.env.NODE_ENV === 'production') {
@@ -32,6 +57,17 @@ async function seed() {
     console.log(`[SEED] El usuario admin ${ADMIN_EMAIL} ya existe; se conserva su contraseña.`);
   }
   console.log(`[SEED] Usuario admin disponible: ${ADMIN_EMAIL}`);
+
+  for (const demo of readDemoUsers()) {
+    const existing = await User.findOne({ email: demo.email });
+    if (existing) {
+      // Igual que el admin: no se sobreescribe la contraseña ni el rol asignado.
+      console.log(`[SEED] Usuario ${demo.role} ${demo.email} ya existe; se conservan sus datos.`);
+      continue;
+    }
+    await User.create(demo);
+    console.log(`[SEED] Usuario ${demo.role} disponible: ${demo.email}`);
+  }
 
   await ExchangeRate.updateOne(
     { date: todayCaracas(), source: 'BCV' },

@@ -272,6 +272,8 @@ Copia inmutable de la tasa vigente al momento de la operación. Debe persistirse
 }
 ```
 
+**Cliente obligatorio:** toda venta debe enviar `customerId` **o** `customerName` + (`documentType` + `documentNumber` o `customerRUT`). El documento se valida como `RIF`/`CI`/`PASSPORT`; si no existe, se crea el cliente con `email`/`phone` opcionales. La venta persiste `customerId` y `customerSnapshot`, y la factura muestra `Documento: <número> (<tipo>)`. No se admite `Consumidor final`: una venta sin cliente responde `400 VALIDATION_ERROR`.
+
 **Métodos de pago:** `CASH_USD`, `CASH_VES`, `CARD`, `TRANSFER`, `CREDIT`.
 
 ### 4.3 Representación de venta
@@ -487,7 +489,20 @@ Copia inmutable de la tasa vigente al momento de la operación. Debe persistirse
 
 ---
 
-## 7. Eventos en tiempo real (Socket.IO)
+## 7. Recurso: Users — `/api/users`
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/api/users` | Listado con filtros `search`, `role`, `active`, `page`, `limit` |
+| POST | `/api/users` | Alta con `name`, `email`, `password` (mín. 8), `role` |
+| PATCH | `/api/users/:id` | Cambio de `name`, `email`, `role`, `active` o `password` |
+| DELETE | `/api/users/:id` | Baja lógica (`active: false`), conserva auditoría |
+
+**Autorización:** solo `ADMIN`. Un administrador no puede cambiar su propio rol ni darse de baja; tampoco se puede dejar el sistema sin administradores activos. Las respuestas **nunca** incluyen `password` ni su hash. Los roles válidos son `ADMIN`, `SUPERVISOR`, `CASHIER`, `WAREHOUSE`, `FINANCE`. Los usuarios demo (`CASHIER`, `SUPERVISOR`, `WAREHOUSE`, `FINANCE`) los crea el seeder con passwords definidas en `.env`.
+
+---
+
+## 8. Eventos en tiempo real (Socket.IO)
 
 | Evento | Dirección | Payload (resumen) |
 |---|---|---|
@@ -507,7 +522,7 @@ Los comprobantes se generan en `var/invoices/` (fuera del árbol servido) y **no
 
 ---
 
-## 8. Integración MCP (interna, no pública)
+## 9. Integración MCP (interna, no pública)
 
 Las tools del asistente no exponen nuevos endpoints HTTP; invocan servicios de dominio bajo `/microservices`:
 
@@ -521,7 +536,7 @@ Las tools del asistente no exponen nuevos endpoints HTTP; invocan servicios de d
 
 ---
 
-## 9. Reglas de compatibilidad y versionado
+## 10. Reglas de compatibilidad y versionado
 1. Nuevos campos pueden agregarse sin cambiar versión; campos existentes nunca se renombran ni se eliminan en v1.
 2. Cambios de tipo o semántica requieren `Accept-Version: 2`.
 3. Todo error, incluso el 500, respeta el sobre de §1.

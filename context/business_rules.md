@@ -193,10 +193,11 @@ diasCobertura      = stock.available / consumoMedioDiario   // ∞ si consumo = 
 ## 6. Reglas de clientes y crédito
 
 1. Identificadores válidos: `RIF`, `CI`, `PASSPORT`; se validan formato y dígito verificador cuando aplique.
-2. Un RIF duplicado se rechaza con `409 VALIDATION_ERROR`; se permite búsqueda por coincidencia parcial para evitar altas duplicadas.
-3. Una venta `CREDIT` requiere: cliente activo, `credit.enabled=true`, `balance + total <= limit` y `days` vigente. El saldo se actualiza en la **misma transacción** que el stock.
-4. Los clientes exentos de IVA requieren certificado vigente; vencido el certificado, se revierte automáticamente a `IVA_GENERAL`.
-5. El estado de cuenta consolida ventas, abonos y notas de crédito, siempre en la moneda solicitada con su `rateUsed`.
+2. **Toda venta —incluso de contado— exige cliente identificado con nombre y documento válido.** No existe «Consumidor final». Si el documento no está registrado, se da de alta al cliente en la misma operación; el `customerSnapshot` viaja en la venta y el tipo+número de documento se imprimen en la factura.
+3. Un RIF duplicado se rechaza con `409 VALIDATION_ERROR`; se permite búsqueda por coincidencia parcial para evitar altas duplicadas.
+4. Una venta `CREDIT` requiere: cliente activo, `credit.enabled=true`, `balance + total <= limit` y `days` vigente. El saldo se actualiza en la **misma transacción** que el stock.
+5. Los clientes exentos de IVA requieren certificado vigente; vencido el certificado, se revierte automáticamente a `IVA_GENERAL`.
+6. El estado de cuenta consolida ventas, abonos y notas de crédito, siempre en la moneda solicitada con su `rateUsed`.
 
 ---
 

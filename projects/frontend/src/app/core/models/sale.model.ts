@@ -19,4 +19,14 @@ export interface Sale {
   paymentMethod: string;
   createdAt: string;
   currency?: Currency;
+  customer?: {
+    id: string;
+    name: string;
+    documentType: string;
+    documentNumber: string;
+    email?: string | null;
+    phone?: string | null;
+  } | null;
+  customerName?: string | null;
+  customerRUT?: string | null;
 }

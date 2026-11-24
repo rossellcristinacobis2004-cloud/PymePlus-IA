@@ -175,8 +175,16 @@ try {
     JSON.stringify(product.body.data)
   );
 
+  // Toda venta necesita cliente identificado (nombre + documento válido).
+  const cashCustomer = await Customer.create({
+    name: 'Cliente de Contado',
+    documentType: 'RIF',
+    documentNumber: 'J-11112222-3'
+  });
+
   const saleBody = {
     currency: 'USD',
+    customerId: String(cashCustomer._id),
     items: [{ productId, quantity: 2 }],
     payment: { method: 'CASH_USD', amount: 23.2 }
   };
@@ -264,6 +272,7 @@ try {
     token,
     body: {
       currency: 'USD',
+      customerName: 'Cliente Factura',
       customerRUT: 'J-12345678-9',
       customerEmail: 'factura@test.local',
       paymentMethod: 'Punto de Venta',
@@ -277,6 +286,31 @@ try {
       invoiceSale.body.data.paymentMethod === 'Punto de Venta' &&
       invoiceSale.body.data.customerRUT === 'J-12345678-9',
     JSON.stringify(invoiceSale.body)
+  );
+  check(
+    'cliente obligatorio queda registrado en la venta',
+    invoiceSale.body.data.customer?.name === 'Cliente Factura' &&
+      invoiceSale.body.data.customer?.documentType === 'RIF' &&
+      invoiceSale.body.data.customer?.documentNumber === 'J-12345678-9' &&
+      Boolean(invoiceSale.body.data.customer?.id) &&
+      Boolean(await Customer.findOne({ documentNumber: 'J-12345678-9' })),
+    JSON.stringify(invoiceSale.body.data.customer)
+  );
+
+  const anonymousSale = await request('/api/sales', {
+    method: 'POST',
+    token,
+    body: {
+      currency: 'USD',
+      items: [{ productId, quantity: 1 }],
+      payment: { method: 'CASH_USD' }
+    },
+    headers: { 'X-Idempotency-Key': '44444444-4444-4444-8444-444444444444' }
+  });
+  check(
+    'venta sin cliente responde 400',
+    anonymousSale.status === 400 && anonymousSale.body.errors[0].field === 'customerName',
+    JSON.stringify(anonymousSale.body)
   );
 
   const resend = await request(`/api/sales/${invoiceSale.body.data.id}/resend-invoice`, {
@@ -598,6 +632,7 @@ try {
     token,
     body: {
       items: [{ productId: secId, quantity: 1 }],
+      customerId: String(cashCustomer._id),
       customerEmail: 'correo-invalido',
       payment: { method: 'CASH_USD' }
     },
@@ -659,6 +694,7 @@ try {
     token: cashierToken,
     body: {
       items: [{ productId: secId, quantity: 1 }],
+      customerId: String(cashCustomer._id),
       payment: { method: 'CASH_USD' }
     },
     headers: { 'X-Idempotency-Key': '91000000-0000-4000-8000-000000000003' }
@@ -699,6 +735,7 @@ try {
     token,
     body: {
       items: [{ productId: expiredProduct.body.data.id, quantity: 1 }],
+      customerId: String(cashCustomer._id),
       payment: { method: 'CASH_USD' }
     },
     headers: { 'X-Idempotency-Key': '91000000-0000-4000-8000-000000000004' }
@@ -727,6 +764,7 @@ try {
     token,
     body: {
       items: [{ productId: secId, quantity: 1 }],
+      customerId: String(cashCustomer._id),
       payment: { method: 'CASH_USD' }
     },
     headers: { 'X-Idempotency-Key': '91000000-0000-4000-8000-000000000005' }
@@ -794,6 +832,95 @@ try {
   );
   const finalCredit = await Customer.findById(concurrentCustomer._id).lean();
   check('saldo de crédito concurrente', finalCredit.credit.balanceUSD === 11.6, `saldo=${finalCredit.credit.balanceUSD}`);
+
+  // ---------------------------------------------------------------------------
+  // Panel ADMIN de usuarios: alto, cambio de rol, baja y sin secretos en la API.
+  // ---------------------------------------------------------------------------
+  const usersForCashier = await request('/api/users', { token: cashierToken });
+  check('cajero no puede listar usuarios', usersForCashier.status === 403, JSON.stringify(usersForCashier.body));
+
+  const usersForAdmin = await request('/api/users', { token });
+  check(
+    'admin lista usuarios sin contraseñas',
+    usersForAdmin.status === 200 &&
+      Array.isArray(usersForAdmin.body.data) &&
+      usersForAdmin.body.data.length >= 3 &&
+      usersForAdmin.body.data.every((item) => !('password' in item) && Boolean(item.role)),
+    JSON.stringify(usersForAdmin.body).slice(0, 300)
+  );
+
+  const createdUser = await request('/api/users', {
+    method: 'POST',
+    token,
+    body: {
+      name: 'Supervisor Nuevo',
+      email: 'supervisor-nuevo@test.local',
+      password: 'Supervisor123',
+      role: 'SUPERVISOR'
+    }
+  });
+  check(
+    'admin crea usuario',
+    createdUser.status === 201 &&
+      createdUser.body.data.role === 'SUPERVISOR' &&
+      !('password' in createdUser.body.data),
+    JSON.stringify(createdUser.body)
+  );
+  const newUserId = createdUser.body.data.id;
+
+  const duplicateUser = await request('/api/users', {
+    method: 'POST',
+    token,
+    body: {
+      name: 'Duplicado',
+      email: 'supervisor-nuevo@test.local',
+      password: 'Supervisor123',
+      role: 'CASHIER'
+    }
+  });
+  check('correo duplicado responde 409', duplicateUser.status === 409, JSON.stringify(duplicateUser.body));
+
+  const roleChanged = await request(`/api/users/${newUserId}`, {
+    method: 'PATCH',
+    token,
+    body: { role: 'FINANCE' }
+  });
+  check(
+    'admin cambia el rol',
+    roleChanged.status === 200 && roleChanged.body.data.role === 'FINANCE',
+    JSON.stringify(roleChanged.body)
+  );
+
+  const selfDemote = await request(`/api/users/${login.body.data.user.id}`, {
+    method: 'PATCH',
+    token,
+    body: { active: false }
+  });
+  check('admin no puede darse de baja', selfDemote.status === 400, JSON.stringify(selfDemote.body));
+
+  const lastAdmin = await request(`/api/users/${login.body.data.user.id}`, {
+    method: 'PATCH',
+    token,
+    body: { role: 'CASHIER' }
+  });
+  check(
+    'admin no puede cambiar su propio rol',
+    lastAdmin.status === 400 && lastAdmin.body.errors[0].field === 'role',
+    JSON.stringify(lastAdmin.body)
+  );
+
+  const newUserLogin = await request('/api/auth/login', {
+    method: 'POST',
+    body: { email: 'supervisor-nuevo@test.local', password: 'Supervisor123' }
+  });
+  check('el usuario creado puede iniciar sesión', newUserLogin.status === 200, JSON.stringify(newUserLogin.body));
+
+  const deactivated = await request(`/api/users/${newUserId}`, { method: 'DELETE', token });
+  check(
+    'admin da de baja al usuario',
+    deactivated.status === 200 && deactivated.body.data.active === false,
+    JSON.stringify(deactivated.body)
+  );
 
   console.log(`\nINTEGRATION OK (${passed} verificaciones)`);
   process.exitCode = 0;

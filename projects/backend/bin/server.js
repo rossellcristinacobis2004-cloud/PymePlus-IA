@@ -15,6 +15,7 @@ import { connectDatabase, databaseState } from '../databases/mongodb.js';
 import { normalizeError } from '../helpers/errors.js';
 import { nowIso } from '../helpers/response.js';
 import authRoutes from '../api/auth/auth.routes.js';
+import userRoutes from '../api/users/users.routes.js';
 import productRoutes from '../api/products/products.routes.js';
 import saleRoutes from '../api/sales/sales.routes.js';
 import customerRoutes from '../api/customers/customers.routes.js';
@@ -166,6 +167,7 @@ class WebServer {
 
     // Enrutadores del dominio.
     this.app.use('/api/auth', authRoutes);
+    this.app.use('/api/users', userRoutes);
     this.app.use('/api/products', productRoutes);
     this.app.use('/api/sales', salesLimiter, saleRoutes);
     this.app.use('/api/customers', customerRoutes);

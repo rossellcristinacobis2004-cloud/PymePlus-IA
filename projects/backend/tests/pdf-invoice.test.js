@@ -17,6 +17,7 @@ function sale(overrides = {}) {
     customerRUT: 'J-12345678-9',
     customerSnapshot: {
       name: 'Comercial La Esquina',
+      documentType: 'RIF',
       documentNumber: 'J-12345678-9',
       email: 'contacto@test.local',
       phone: '+58 412 1234567'
@@ -55,7 +56,10 @@ test('invoiceFileName deriva FAC desde el número histórico', () => {
 test('el comprobante usa FAC, RUT, alícuota real y leyenda de tasa de respaldo', () => {
   const lines = buildInvoiceLines(sale()).join('\n');
   assert.match(lines, /Factura: FAC-2026-000123/);
-  assert.match(lines, /Documento: J-12345678-9/);
+  assert.match(lines, /Cliente: Comercial La Esquina/);
+  assert.match(lines, /Documento: J-12345678-9 \(RIF\)/);
+  assert.doesNotMatch(lines, /Consumidor final/);
+  assert.doesNotMatch(lines, /Documento: N\/A/);
   assert.match(lines, /Pago: Punto de Venta/);
   assert.match(lines, /IVA 16% USD 1.87/);
   assert.match(lines, /Tasa BCV: 36 \(2026-11-23\) Fuente: BCV/);
