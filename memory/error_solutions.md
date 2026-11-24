@@ -167,3 +167,25 @@ Registro de errores y parches aplicados.
 ### Tokens de recuperación y secretos inseguros
 - **Causa:** `resetTokens` crecía sin límite y guardaba tokens en claro; `TRUST_PROXY=1` por defecto; JWT sin longitud mínima en producción.
 - **Solución:** tokens hasheados con SHA-256 y poda por expiración/tamaño, limitadores de refresh/forgot/reset, `TRUST_PROXY=false` y validación de secretos de 32 caracteres al construir el servidor en producción. `requireAuth` revalida rol/estado en DB con caché de 30 s.
+
+## 2026-11-23 — Instalación y operación local de MongoDB
+
+### MSI de MongoDB termina con Error 1925
+- **Causa:** `msiexec /i` se ejecutó sin permisos de administrador; Windows Installer requiere elevación para instalar el servicio.
+- **Solución:** ejecutar el MSI con `Start-Process -Verb RunAs` y aceptar UAC. Códigos `0` y `3010` se tratan como éxito.
+
+### Desinstalar/reinstalar dejó `mongos.exe` pero no `mongod.exe`
+- **Causa:** una instalación fallida previa dejó el producto registrado de forma inconsistente.
+- **Solución:** desinstalar el MSI con `/x` elevado y reinstalar limpiamente. Verificar siempre que exista `C:\Program Files\MongoDB\Server\9.0\bin\mongod.exe` antes de continuar.
+
+### MongoDB servía transacciones como standalone
+- **Causa:** `mongod.cfg` tenía `#replication:` comentado; `db.hello()` devolvía `setName: undefined`.
+- **Solución:** respaldar el config, activar `replication.replSetName: rs0`, reiniciar el servicio y ejecutar `rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: '127.0.0.1:27017' }] })`. Verificar `isWritablePrimary: true` y `myState: 1`.
+
+### `mongosh --eval` rompía con objetos JS
+- **Causa:** PowerShell eliminaba las comillas dobles internas del argumento y `rs.initiate` recibía `rs0` sin comillas.
+- **Solución:** usar comillas dobles para el argumento de PowerShell y comillas simples dentro del JavaScript, por ejemplo `--eval "rs.initiate({ _id: 'rs0', ... })"`.
+
+### Suite de integración no podía apuntar a MongoDB real
+- **Causa:** `scripts/integration-test.js` siempre creaba `MongoMemoryReplSet` y sobrescribía `MONGO_URI`; además siempre llamaba a `replSet.stop()`.
+- **Solución:** añadir `USE_EXTERNAL_MONGO=1` y el wrapper `test:integration:real`. La ruta externa fuerza `pymeplus_ia_integration`, comprueba el nombre de DB antes de limpiar y omite `replSet.stop()`.

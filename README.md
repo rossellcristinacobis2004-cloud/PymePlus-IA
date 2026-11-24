@@ -64,7 +64,7 @@ npm run test:smoke
 npm run test:integration
 ```
 
-Resultados: 41 pruebas unitarias, 6 comprobaciones HTTP y 75 verificaciones de integración, todas correctas. Ejecuta `npm audit --audit-level=high` desde `projects/backend` (desde la raíz falla con `ENOLOCK`).
+Resultados: 41 pruebas unitarias, 6 comprobaciones HTTP, 75 verificaciones de integración en memoria y 75 contra MongoDB real (`npm run test:integration:real`), todas correctas. Ejecuta `npm audit --audit-level=high` desde `projects/backend` (desde la raíz falla con `ENOLOCK`).
 
 ## Enlaces
 

@@ -10,8 +10,29 @@ process.env.PORT = '0';
 process.env.NODE_ENV = 'test';
 process.env.FALLBACK_BCV_RATE = '36';
 
-const replSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-process.env.MONGO_URI = replSet.getUri();
+const USE_EXTERNAL_MONGO = process.env.USE_EXTERNAL_MONGO === '1';
+const INTEGRATION_DB = 'pymeplus_ia_integration';
+let replSet = null;
+
+if (USE_EXTERNAL_MONGO) {
+  if (!process.env.MONGO_URI) {
+    throw new Error('USE_EXTERNAL_MONGO requiere MONGO_URI en el entorno.');
+  }
+  // Nunca se ejecuta la suite sobre la base de producción: se fuerza una DB temporal.
+  const uri = new URL(process.env.MONGO_URI);
+  uri.pathname = `/${INTEGRATION_DB}`;
+  process.env.MONGO_URI = uri.toString();
+
+  await mongoose.connect(process.env.MONGO_URI);
+  if (mongoose.connection.name !== INTEGRATION_DB) {
+    throw new Error(`DB de integración inesperada: ${mongoose.connection.name}`);
+  }
+  await mongoose.connection.dropDatabase();
+  await mongoose.disconnect();
+} else {
+  replSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
+  process.env.MONGO_URI = replSet.getUri();
+}
 
 const { default: WebServer } = await import('../bin/server.js');
 const { default: User } = await import('../api/auth/user.model.js');
@@ -780,7 +801,17 @@ try {
   console.error('\nINTEGRATION FAIL:', error.message);
   process.exitCode = 1;
 } finally {
-  await server.close();
-  await mongoose.disconnect();
-  await replSet.stop();
+  try {
+    await server.close();
+    if (USE_EXTERNAL_MONGO && mongoose.connection.readyState === 1) {
+      if (mongoose.connection.name !== INTEGRATION_DB) {
+        throw new Error(`DB de integración inesperada al limpiar: ${mongoose.connection.name}`);
+      }
+      await mongoose.connection.dropDatabase();
+      console.log(`[DB] Base temporal ${INTEGRATION_DB} eliminada.`);
+    }
+  } finally {
+    await mongoose.disconnect();
+    if (replSet) await replSet.stop();
+  }
 }

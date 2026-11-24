@@ -31,6 +31,7 @@ El servidor escucha en `http://0.0.0.0:3500` por defecto.
 | `npm test` | Pruebas unitarias de reglas de negocio |
 | `npm run test:smoke` | Pruebas HTTP sin base de datos |
 | `npm run test:integration` | Pruebas end-to-end con MongoDB en memoria |
+| `npm run test:integration:real` | Misma suite contra MongoDB real (`rs0`); usa y limpia la DB temporal `pymeplus_ia_integration` |
 | `npm run seed` | Carga datos base |
 | `npm run migrate` | Convierte categorías antiguas de producto a `String` |
 
