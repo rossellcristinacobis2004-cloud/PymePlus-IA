@@ -1,0 +1,300 @@
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1">Punto de venta</h1>
+    <div class="text-secondary small">
+      Busca por nombre, SKU o escanea un código de barras y presiona Enter.
+    </div>
+  </div>
+  <div class="text-end">
+    <div class="small text-secondary">Tasa BCV vigente</div>
+    <div class="money-strong">
+      @if (rate(); as currentRate) {
+        {{ formatMoney(currentRate.value, 'VES') }} por USD
+      } @else {
+        Cargando...
+      }
+    </div>
+  </div>
+</div>
+
+@if (rateStatus() !== 'ACTIVE') {
+  <div class="alert alert-warning d-flex gap-2" role="alert">
+    <i class="bi bi-exclamation-triangle mt-1"></i>
+    <div>
+      @switch (rateStatus()) {
+        @case ('STALE') {
+          La tasa BCV está desactualizada. Puedes cobrar en USD; el cobro en VES está bloqueado.
+        }
+        @case ('EXPIRED') {
+          La tasa BCV venció. No se pueden registrar ventas hasta actualizarla.
+        }
+      }
+    </div>
+  </div>
+}
+
+@if (rate()?.isFallback) {
+  <div class="rate-warning mb-3" role="status">
+    <i class="bi bi-info-circle me-2"></i>
+    Tasa de respaldo — pendiente de confirmación BCV.
+  </div>
+}
+
+<div class="row g-3 align-items-start">
+  <section class="col-lg-7" aria-label="Catálogo de productos">
+    <div class="panel">
+      <div class="panel__header d-flex align-items-center gap-2">
+        <i class="bi bi-search"></i>
+        Productos
+      </div>
+      <div class="p-3">
+        <input
+          type="search"
+          class="form-control form-control-lg"
+          placeholder="Nombre, SKU o código de barras"
+          aria-label="Buscar productos"
+          autocomplete="off"
+          [value]="search()"
+          (input)="onSearchInput($any($event.target).value)"
+          (keydown.enter)="$event.preventDefault(); lookupBarcode()"
+        />
+        <div class="form-text">El lector de barras envía Enter automáticamente.</div>
+
+        @if (loading()) {
+          <div class="text-center py-5 text-secondary">
+            <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+            Cargando catálogo...
+          </div>
+        } @else if (filteredProducts().length === 0) {
+          <div class="text-center py-5 text-secondary">
+            <i class="bi bi-inbox fs-2 d-block mb-2"></i>
+            No hay productos para esa búsqueda.
+          </div>
+        } @else {
+          <div class="list-group list-group-flush mt-3">
+            @for (product of filteredProducts(); track product.id) {
+              <div class="list-group-item d-flex justify-content-between align-items-center gap-3 px-0">
+                <div class="min-w-0">
+                  <div class="fw-semibold text-truncate">{{ product.name }}</div>
+                  <div class="text-secondary small">
+                    {{ product.sku }}
+                    @if (product.barcode) {
+                      · {{ product.barcode }}
+                    }
+                  </div>
+                </div>
+                <div class="text-end">
+                  <div class="money-strong">{{ formatMoney(product.pricing.price.USD.amount, 'USD') }}</div>
+                  <div class="text-secondary small tabular-nums">{{ formatMoney(product.pricing.price.VES.amount, 'VES') }}</div>
+                  <span
+                    class="badge mt-1"
+                    [class.text-bg-success]="product.stock.status === 'NORMAL'"
+                    [class.text-bg-warning]="product.stock.status === 'LOW'"
+                    [class.text-bg-danger]="product.stock.status === 'OUT_OF_STOCK'"
+                  >
+                    <i class="bi" [class.bi-exclamation-triangle]="product.stock.status !== 'NORMAL'"></i>
+                    {{ product.stock.available }} {{ product.stock.unit }}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-primary rounded-circle"
+                  [disabled]="product.stock.available <= 0"
+                  [attr.aria-label]="'Agregar ' + product.name"
+                  (click)="addProduct(product)"
+                >
+                  <i class="bi bi-plus-lg"></i>
+                </button>
+              </div>
+            }
+          </div>
+        }
+      </div>
+    </div>
+  </section>
+
+  <section class="col-lg-5" aria-label="Carrito y cobro">
+    <div class="panel position-sticky top-0">
+      <div class="panel__header d-flex justify-content-between align-items-center">
+        <span>Carrito</span>
+        <span class="badge text-bg-primary">{{ cart.itemCount() }} ítems</span>
+      </div>
+
+      <div class="p-3">
+        @if (lastSale(); as sale) {
+          <div class="alert alert-success d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <div>
+              <div class="fw-semibold">{{ sale.number }} registrada</div>
+              <div class="small">Factura {{ sale.invoiceNumber }}</div>
+            </div>
+            <div class="d-flex gap-2">
+              <button type="button" class="btn btn-sm btn-success" (click)="downloadInvoice()">
+                <i class="bi bi-download me-1"></i> PDF
+              </button>
+              <button type="button" class="btn btn-sm btn-outline-secondary" (click)="newSale()">Nueva venta</button>
+            </div>
+          </div>
+        }
+
+        @if (cart.isEmpty()) {
+          <div class="text-center py-5 text-secondary">
+            <i class="bi bi-cart-plus fs-2 d-block mb-2"></i>
+            El carrito está vacío.
+          </div>
+        } @else {
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-2">
+              <thead>
+                <tr>
+                  <th>Producto</th>
+                  <th class="text-center" style="width: 88px">Cant.</th>
+                  <th class="text-end" style="width: 92px">Total</th>
+                  <th aria-label="Acciones"></th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (line of cart.lines(); track $index) {
+                  <tr>
+                    <td>
+                      <div class="fw-semibold small">{{ line.product.name }}</div>
+                      @if (line.lot) {
+                        <div class="text-secondary small">Lote {{ line.lot }}</div>
+                      }
+                      <div class="input-group input-group-sm mt-1" style="max-width: 130px">
+                        <span class="input-group-text">%</span>
+                        <input
+                          type="number"
+                          class="form-control"
+                          min="0"
+                          max="100"
+                          step="1"
+                          [value]="line.discountPercent"
+                          [attr.aria-label]="'Descuento de ' + line.product.name"
+                          (change)="updateDiscount($index, $any($event.target).value)"
+                        />
+                      </div>
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        class="form-control form-control-sm text-center"
+                        min="1"
+                        [max]="line.product.stock.available"
+                        [value]="line.quantity"
+                        [attr.aria-label]="'Cantidad de ' + line.product.name"
+                        (change)="updateQuantity($index, $any($event.target).value)"
+                      />
+                    </td>
+                    <td class="text-end money-strong small">
+                      {{ formatMoney(round2(line.product.priceUSD * line.quantity * (1 - line.discountPercent / 100)), 'USD') }}
+                    </td>
+                    <td class="text-end">
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-link text-danger"
+                        [attr.aria-label]="'Quitar ' + line.product.name"
+                        (click)="removeLine($index)"
+                      >
+                        <i class="bi bi-trash3"></i>
+                      </button>
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+
+        <hr />
+
+        <div class="d-flex gap-2 mb-3" role="group" aria-label="Moneda de cobro">
+          <button
+            type="button"
+            class="btn btn-sm flex-fill"
+            [class.btn-primary]="currency() === 'USD'"
+            [class.btn-outline-secondary]="currency() !== 'USD'"
+            (click)="selectCurrency('USD')"
+          >
+            USD
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm flex-fill"
+            [class.btn-primary]="currency() === 'VES'"
+            [class.btn-outline-secondary]="currency() !== 'VES'"
+            [disabled]="!canChargeVes()"
+            (click)="selectCurrency('VES')"
+          >
+            VES
+          </button>
+        </div>
+
+        <dl class="row mb-2 small">
+          <dt class="col-7 text-secondary">Subtotal</dt>
+          <dd class="col-5 text-end tabular-nums">{{ formatMoney(totals().subtotalUSD, 'USD') }}</dd>
+          <dt class="col-7 text-secondary">Descuento</dt>
+          <dd class="col-5 text-end tabular-nums">-{{ formatMoney(totals().discountUSD, 'USD') }}</dd>
+          <dt class="col-7 text-secondary">Base imponible</dt>
+          <dd class="col-5 text-end tabular-nums">{{ formatMoney(totals().taxableBaseUSD, 'USD') }}</dd>
+          <dt class="col-7 text-secondary">IVA</dt>
+          <dd class="col-5 text-end tabular-nums">{{ formatMoney(totals().ivaUSD, 'USD') }}</dd>
+        </dl>
+
+        <div class="d-flex justify-content-between align-items-baseline border-top pt-2 mb-3">
+          <span class="fw-semibold">Total estimado</span>
+          <span class="fs-4 money-strong text-primary">{{ formatMoney(totals().total, currency()) }}</span>
+        </div>
+
+        <div class="mb-2">
+          <label for="payment-method" class="form-label small mb-1">Método de pago</label>
+          <select
+            id="payment-method"
+            class="form-select"
+            [value]="paymentMethod()"
+            (change)="selectPaymentMethod($any($event.target).value)"
+          >
+            @for (method of paymentMethods; track method) {
+              <option [value]="method">{{ method }}</option>
+            }
+          </select>
+        </div>
+
+        <div class="mb-1">
+          <label for="paid-amount" class="form-label small mb-1">Monto pagado</label>
+          <div class="input-group">
+            <input
+              id="paid-amount"
+              type="number"
+              class="form-control tabular-nums"
+              min="0"
+              step="0.01"
+              [value]="paidAmount()"
+              (input)="onPaidInput($any($event.target).value)"
+            />
+            <button type="button" class="btn btn-outline-secondary" (click)="fillExactAmount()">Exacto</button>
+          </div>
+        </div>
+
+        <div class="d-flex justify-content-between small mb-3" [class.text-danger]="change() < 0">
+          <span>Vuelto</span>
+          <span class="money-strong">{{ formatMoney(change(), currency()) }}</span>
+        </div>
+
+        <button
+          type="button"
+          class="btn btn-primary w-100 py-2"
+          [disabled]="submitting() || cart.isEmpty() || !canCharge() || paidAmount() + 0.001 < totals().total"
+          (click)="charge()"
+        >
+          @if (submitting()) {
+            <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+            Registrando venta...
+          } @else {
+            <i class="bi bi-cash-coin me-2"></i>
+            Cobrar {{ formatMoney(totals().total, currency()) }}
+          }
+        </button>
+      </div>
+    </div>
+  </section>
+</div>

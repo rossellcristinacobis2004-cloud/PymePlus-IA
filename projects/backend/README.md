@@ -77,6 +77,17 @@ El servidor escucha en `http://0.0.0.0:3500` por defecto.
 - `middlewares/auth.middleware.js` es la autorización canónica; `middlewares/auth.js` solo re-exporta por compatibilidad.
 - El detalle está en `/context/api_contracts.md` y `/context/business_rules.md`.
 
+## Frontend servido por este proceso
+
+`public/` contiene el build de producción de `projects/frontend`; no se edita a mano. Para actualizarlo:
+
+```bash
+cd ../frontend
+npm run build:backend
+```
+
+El backend sirve esos estáticos y redirige las rutas desconocidas a `index.html`, salvo `/api/*`, que responde JSON. Las facturas nunca son estáticos: se descargan solo con JWT desde `/api/sales/:id/invoice.pdf`.
+
 ## Despliegue
 ```bash
 pm2 start ecosystem.config.cjs --env production

@@ -189,3 +189,29 @@ Registro de errores y parches aplicados.
 ### Suite de integración no podía apuntar a MongoDB real
 - **Causa:** `scripts/integration-test.js` siempre creaba `MongoMemoryReplSet` y sobrescribía `MONGO_URI`; además siempre llamaba a `replSet.stop()`.
 - **Solución:** añadir `USE_EXTERNAL_MONGO=1` y el wrapper `test:integration:real`. La ruta externa fuerza `pymeplus_ia_integration`, comprueba el nombre de DB antes de limpiar y omite `replSet.stop()`.
+
+## 2026-11-24 — Frontend POS Angular 22
+
+### `TS1205` al reexportar modelos
+- **Causa:** `export { Money, RateSnapshot }` reexportaba tipos con `isolatedModules: true`.
+- **Solución:** usar `export type { Money, RateSnapshot }` en `core/models/product.model.ts`.
+
+### `@import` de Sass deprecado
+- **Causa:** `styles.scss` importaba `bootstrap/scss/bootstrap` con la sintaxis en desuso.
+- **Solución:** declarar `bootstrap.min.css` y `bootstrap-icons.css` en `angular.json`; `styles.scss` conserva solo variables y estilos propios.
+
+### Build excedía el budget por defecto
+- **Causa:** Bootstrap más la fuente de iconos suman ~685 kB sin comprimir.
+- **Solución:** subir el límite de aviso a 1 MB y el de error a 2 MB. La transferencia estimada sigue en ~132 kB.
+
+### `login` devolvía el tipo incorrecto
+- **Causa:** `ApiService` ya desenvuelve `LoginData`, pero `AuthService` no aplicaba `map` y devolvía el objeto completo en vez de `User`.
+- **Solución:** `tap()` guarda la sesión y conecta el socket; `map(data => data.user)` devuelve el usuario a la vista.
+
+### Prueba HTTP comparaba el mensaje técnico
+- **Causa:** se asertaba `ApiError.message` ("No se pudo registrar la venta.") en vez del mensaje que lee la UI.
+- **Solución:** comprobar `userMessage` y `code` (`INSUFFICIENT_STOCK`) desde `ApiError`.
+
+### Posible error lógico del sobre con HTTP 200
+- **Causa:** si una respuesta llegaba con `success: false` y status 200, `map()` devolvía `data: null` como si nada hubiera fallado.
+- **Solución:** `ApiService.unwrap()` lanza `ApiError` cuando `success` es falso, usando `userMessage` y el primer `issue` del sobre.

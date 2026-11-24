@@ -1,0 +1,13 @@
+.login-page {
+  min-height: 100vh;
+  background: linear-gradient(145deg, #f8fafc 0%, #e6fffa 100%);
+}
+
+[data-bs-theme='dark'] .login-page {
+  background: linear-gradient(145deg, #0f172a 0%, #134e4a 100%);
+}
+
+.login-card {
+  max-width: 420px;
+  border-radius: 1rem;
+}

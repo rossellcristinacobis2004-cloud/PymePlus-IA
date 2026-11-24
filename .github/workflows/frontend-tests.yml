@@ -1,0 +1,37 @@
+name: Frontend tests
+
+on:
+  push:
+    paths:
+      - 'projects/frontend/**'
+      - 'projects/backend/public/**'
+      - '.github/workflows/frontend-tests.yml'
+  pull_request:
+    paths:
+      - 'projects/frontend/**'
+      - 'projects/backend/public/**'
+      - '.github/workflows/frontend-tests.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: projects/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: projects/frontend/package-lock.json
+      - run: npm ci
+      - name: Sin secretos ni artefactos temporales versionados
+        run: |
+          if git ls-files | grep -E '(^|/)\.env$|e2e-temp\.mjs$|projects/frontend/dist/'; then
+            echo "Hay secretos o artefactos temporales versionados"
+            exit 1
+          fi
+      - run: npm test -- --watch=false
+      - run: npm run build
+      - run: npm audit --audit-level=high
