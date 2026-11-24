@@ -1,5 +1,7 @@
 # PymePlus IA — Backend
 
+[← Volver al README principal](../../README.md)
+
 API REST + Socket.IO para el sistema POS y de inventario de PymePlus IA.
 
 **Stack:** Node.js 26 · ESM · Express 5 · MongoDB/Mongoose 9 · Socket.IO 4 · JWT + bcryptjs.
@@ -26,6 +28,7 @@ El servidor escucha en `http://0.0.0.0:3500` por defecto.
 | `npm run dev` | Inicia con recarga automática |
 | `npm test` | Pruebas unitarias de reglas de negocio |
 | `npm run test:smoke` | Pruebas HTTP sin base de datos |
+| `npm run test:integration` | Pruebas end-to-end con MongoDB en memoria |
 | `npm run seed` | Carga datos base |
 
 ## Endpoints
