@@ -77,7 +77,7 @@ Solo los roles `ADMIN`, `SUPERVISOR` y `CASHIER` entran al POS y a Ventas; `WARE
 
 ## Pruebas y verificación real
 
-Las 21 pruebas unitarias cubren cálculo de IVA con descuento, inclusión de IVA en el precio, conversión a VES, redondeo HALF_UP, formato monetario, carrito con lotes, desenvuelto del sobre API, errores legibles, header de petición, filtros y orden del inventario, detección de stock mínimo, formato de fecha en Caracas y construcción de KPIs y barras de reportes.
+Las 23 pruebas unitarias cubren cálculo de IVA con descuento, inclusión de IVA en el precio, conversión a VES, redondeo HALF_UP, formato monetario, carrito con lotes, desenvuelto del sobre API, errores legibles, header de petición, renderizado y validación del login, filtros y orden del inventario, detección de stock mínimo, formato de fecha en Caracas y construcción de KPIs y barras de reportes.
 
 La verificación end-to-end se ejecutó contra un backend real en puerto `3502` y la base temporal `pymeplus_ia_frontend_e2e`, eliminada al terminar. Resultado: login, catálogo, venta `VTA-2026-000001`, factura `FAC-2026-000001`, total `2.44 USD`, reintento idempotente, eventos `invoice:ready`/`sale:created`/`stock:updated`, PDF de 1924 bytes y SPA servida desde el backend. El script efímero no se versiona.
 

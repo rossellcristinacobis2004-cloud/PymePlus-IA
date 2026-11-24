@@ -221,3 +221,7 @@ Registro de errores y parches aplicados.
 ### Prueba de fecha esperaba año de 4 dígitos
 - **Causa:** `dateStyle: 'short'` de `Intl.DateTimeFormat('es-VE')` produjo `24/11/26`, mientras la aserción esperaba `24/11/2026`.
 - **Solución:** reemplazar `dateStyle`/`timeStyle` por opciones explícitas (`year: 'numeric'`, `month`, `day`, `hour`, `minute`, `timeZone: 'America/Caracas'`). Salida estable y legible en el historial de ventas.
+
+### Login no respondía al hacer clic en «Ingresar»
+- **Causa:** el `<form>` de `login.component.html` tenía `(ngSubmit)` pero no `[formGroup]="form"`. Los `formControlName` no encontraban el `FormGroupDirective` y Angular lanzaba `RuntimeError` en `checkParentType` durante el render; el botón parecía no hacer nada y no se mostraba ningún mensaje.
+- **Solución:** añadir `[formGroup]="form"` al formulario y crear `login.component.spec.ts` que renderiza el componente y comprueba los valores iniciales y la validación de la contraseña. Las pruebas pasaron de 21 a 23.

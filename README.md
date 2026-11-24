@@ -98,7 +98,7 @@ npm run build
 npm audit --audit-level=high
 ```
 
-Resultados de la última verificación: 41 pruebas unitarias, 6 comprobaciones HTTP, 75 verificaciones de integración en memoria y 75 contra MongoDB real; 21 pruebas frontend. Todas correctas. Ejecuta `npm audit` dentro de cada proyecto: desde la raíz falla con `ENOLOCK`.
+Resultados de la última verificación: 41 pruebas unitarias, 6 comprobaciones HTTP, 75 verificaciones de integración en memoria y 75 contra MongoDB real; 23 pruebas frontend. Todas correctas. Ejecuta `npm audit` dentro de cada proyecto: desde la raíz falla con `ENOLOCK`.
 
 GitHub Actions ejecuta `backend-tests.yml` y `frontend-tests.yml` de forma independiente según las rutas cambiadas.
 
