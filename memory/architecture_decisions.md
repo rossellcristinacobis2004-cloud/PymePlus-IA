@@ -85,3 +85,15 @@
 **Decisión:** Crear `helpers/pdf-invoice.js` como única fuente del comprobante (`generateInvoicePdf`, `invoiceFileName`, `invoicePdf`), con número `FAC`, alícuota real por línea, RUT, método de pago, control, tasa BCV con fecha/fuente y leyenda de fallback; `createSimplePdf` pasa a paginar automáticamente. `ensureInvoiceFile()` regenera siempre el PDF y emite `invoice:ready` fuera de la transacción. Crear `middlewares/auth.middleware.js` como implementación canónica (`requireAuth`, `requireRole`, `requireAdmin`, `requirePricePermission`), dejando `auth.js` como re-export. `POST /api/products` queda solo para `ADMIN` porque la creación exige `priceUSD`; `PATCH` filtra por campos de precio y preserva edición no monetaria para almacén. `ADMIN` sigue siendo el valor persistido; `Administrador` se acepta solo como alias entrante, sin migración de MongoDB.
 
 **Consecuencias:** No se duplica lógica JWT ni se migran roles. Un token de refresh no sirve como access token. Los cambios de plantilla se reflejan de inmediato porque el PDF se regenera. La tasa BCV sigue siendo competencia de `ADMIN`/`FINANCE`: no es precio de producto y no se tocó esa regla.
+
+---
+
+## ADR-008 — 2026-11-23: Endurecimiento de facturas, sockets y JWT
+
+**Estado:** Aceptada
+
+**Contexto:** Auditoría posterior a ADR-007: `/uploads` servía los PDF con RUT, correo y montos sin autenticación; `invoice:ready` se emitía a todos los sockets incluyendo la URL del archivo; el correo releyó el disco con riesgo de carrera frente a descargas concurrentes; el reintento idempotente no reparaba una factura perdida; anular no regeneraba el comprobante y abusaba del evento `stock:updated`. Además `requireRole` no reconocía el alias `Administrador` y `jwt.verify` aceptaba tokens HS384/HS512 con el mismo secreto.
+
+**Decisión:** Bloquear `/uploads/documents/invoices/*` con 404 y servir la factura solo por `GET /api/sales/:id/invoice.pdf` con JWT. Autenticar opcionalmente el handshake de Socket.IO y emitir eventos de factura únicamente a la sala `user:<sellerId>`, sin `pdfUrl`. `ensureInvoiceFile()` genera el `Buffer`, escribe con archivo temporal + `rename` atómico y reutiliza ese buffer en descarga y correo. Extraer `finalizeInvoice()` y aplicarlo en creación, reintento sin `invoice` y anulación (`invoice:voided` + `sale:voided`). Normalizar `Administrador` a `ADMIN` en `requireAuth` y fijar `algorithms: ['HS256']` en access y refresh.
+
+**Consecuencias:** Un socket sin token se conecta como invitado pero no recibe eventos privados. La anulación ya no falsifica un evento de stock. `PATCH` acepta `pricing` anidado, eliminando el falso `200`. Se añadieron verificaciones de xref, algoritmos JWT, reparación por reintento, regeneración tras anulación, mismo buffer en correo y bloqueo de estáticos. Totales: 33 unitarias + 6 smoke + 49 integración.

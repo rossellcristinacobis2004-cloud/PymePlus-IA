@@ -91,3 +91,41 @@ Registro de errores y parches aplicados.
 ### `npm test` fallaba al comparar un `Buffer` con una cadena
 - **Causa:** `assert.equal(buffer.subarray(0, 8), '%PDF-1.4')` comparaba tipos distintos.
 - **Solución:** convertir el subarray con `.toString()` antes de comparar.
+
+## 2026-11-23 — Auditoría posterior a la publicación
+
+### Facturas PDF accesibles sin token
+- **Causa:** `express.static('/uploads')` servía `documents/invoices/` y el correlativo de facturas es secuencial.
+- **Solución:** middleware que responde 404 para `/uploads/documents/invoices/*`; `pdfUrl` apunta ahora a `/api/sales/:id/invoice.pdf`, que exige JWT.
+
+### `invoice:ready` filtraba la URL del PDF a todos los sockets
+- **Causa:** `io.emit` global con `pdfUrl` y handshake de Socket.IO sin autenticar.
+- **Solución:** handshake opcional con JWT que une al cliente a `user:<id>`; emisión solo a esa sala y payload sin URL. La anulación usa `invoice:voided`/`sale:voided`.
+
+### Correo y descarga podían servir un PDF parcial
+- **Causa:** `fs.writeFile` directo más `fs.readFile` posterior en `resendInvoice` generaban carrera con descargas concurrentes.
+- **Solución:** `ensureInvoiceFile()` devuelve el `Buffer`, escribe en un temporal y aplica `rename` atómico; la descarga usa `res.send(buffer)` y el correo recibe ese mismo buffer.
+
+### El reintento idempotente no reparaba una factura perdida
+- **Causa:** la rama `existing.status === 'COMPLETED'` devolvía la venta sin revisar `invoice`.
+- **Solución:** si `!previous.invoice`, ejecutar `finalizeInvoice()` y recargar el documento antes de responder.
+
+### La anulación dejaba la factura diciendo `COMPLETED`
+- **Causa:** `voidSale` cambiaba el estado pero no regeneraba el PDF y emitía `stock:updated` con un payload de venta.
+- **Solución:** regenerar con `finalizeInvoice(..., 'invoice:voided')` y emitir `sale:voided` a la sala del vendedor.
+
+### `pricing` anidado devolvía `200` sin aplicar cambios
+- **Causa:** `requirePricePermission` detectaba `body.pricing`, pero `update()` no lo leía.
+- **Solución:** mapear `pricing.*` a las claves planas del modelo y soportar `priceIncludesTax`.
+
+### El alias `Administrador` no funcionaba en `requireRole`
+- **Causa:** la normalización solo estaba en `requireAdmin`/`requirePricePermission`.
+- **Solución:** normalizar en `requireAuth` para que todas las rutas reciban `ADMIN`.
+
+### `jwt.verify` aceptaba tokens HS384/HS512
+- **Causa:** no se fijaba la lista de algoritmos permitidos.
+- **Solución:** `algorithms: ['HS256']` en access y refresh, con firma HS256 explícita. Verificado con un test que firma en HS384 y espera 401.
+
+### Semilla con contraseña de administrador pública
+- **Causa:** `.env.example` y el seeder usan `Admin12345`; usarlo tal cual en producción permite takeover de ADMIN.
+- **Solución:** advertencia explícita en `.env.example` y en el README del backend para cambiarla antes de sembrar datos.

@@ -24,7 +24,8 @@ jobs:
           cache: npm
           cache-dependency-path: projects/backend/package-lock.json
       - run: npm ci
-      - run: node --check index.js
+      - run: find . -path ./node_modules -prune -o -name '*.js' -print0 | xargs -0 -n1 node --check
       - run: npm test
       - run: npm run test:smoke
       - run: npm run test:integration
+      - run: npm audit --audit-level=high

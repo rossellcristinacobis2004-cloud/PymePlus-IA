@@ -6,6 +6,7 @@ import os from 'os';
 import cors from 'cors';
 import helmet from 'helmet';
 import fileUpload from 'express-fileupload';
+import jwt from 'jsonwebtoken';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
@@ -114,6 +115,29 @@ class WebServer {
     this.app.use('/api/reports', reportRoutes);
     this.app.use('/api/exchange-rates', exchangeRateRoutes);
 
+    // Handshake opcional: sin token se permite la conexión (health/smoke), pero no
+    // se une a ninguna sala privada. Los eventos de factura solo van a su sala.
+    this.io.use((socket, next) => {
+      const token =
+        socket.handshake.auth?.token ||
+        String(socket.handshake.headers.authorization || '').replace(/^Bearer\s+/i, '');
+
+      if (token && process.env.JWT_SECRET) {
+        try {
+          const payload = jwt.verify(token, process.env.JWT_SECRET, {
+            algorithms: ['HS256']
+          });
+          if (payload.sub && payload.type !== 'refresh') {
+            socket.data.userId = String(payload.sub);
+            socket.join(`user:${socket.data.userId}`);
+          }
+        } catch {
+          // Cliente invitado: se conecta sin salas privadas.
+        }
+      }
+      return next();
+    });
+
     this.io.on('connection', (socket) => {
       console.log(`[SOCKET] Cliente conectado: ${socket.id}`);
       socket.on('disconnect', () => console.log(`[SOCKET] Cliente desconectado: ${socket.id}`));
@@ -124,7 +148,11 @@ class WebServer {
     const publicPath = path.join(__dirname, '../public');
     const uploadsPath = path.join(__dirname, '../uploads');
 
-    // Archivos subidos (facturas, imágenes, APK con version.json).
+    // Las facturas contienen RUT, correo y montos: NO son estáticos públicos.
+    // Se entregan únicamente por /api/sales/:id/invoice.pdf con JWT.
+    this.app.use('/uploads/documents/invoices', (_req, res) => res.status(404).end());
+
+    // Resto de archivos subidos (imágenes, APK con version.json).
     this.app.use('/uploads', express.static(uploadsPath, { index: false, fallthrough: true }));
 
     // Estáticos compilados de Angular.

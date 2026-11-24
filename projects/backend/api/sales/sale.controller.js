@@ -27,11 +27,46 @@ async function ensureInvoiceFile(sale) {
   await fs.mkdir(INVOICE_DIR, { recursive: true });
   const fileName = invoiceFileName(sale);
   const filePath = path.join(INVOICE_DIR, fileName);
+  const buffer = generateInvoicePdf(sale);
 
-  // Se regenera siempre para que cambios de plantilla no dejen PDFs obsoletos.
-  await fs.writeFile(filePath, generateInvoicePdf(sale));
+  // Escritura atómica: nunca se sirve ni se adjunta un PDF a medio escribir.
+  const tempPath = `${filePath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+  await fs.writeFile(tempPath, buffer);
+  await fs.rename(tempPath, filePath);
 
-  return { fileName, filePath, relativeUrl: `/uploads/documents/invoices/${fileName}` };
+  const saleId = String(sale._id || sale.id || '');
+  return {
+    fileName,
+    filePath,
+    buffer,
+    // La descarga pública de facturas no existe: siempre pasa por JWT.
+    relativeUrl: `/api/sales/${saleId}/invoice.pdf`
+  };
+}
+
+/** Persiste el comprobante y avisa solo a la sala del vendedor autorizado. */
+async function finalizeInvoice(req, sale, eventName = 'invoice:ready') {
+  const invoiceFile = await ensureInvoiceFile(sale);
+  const invoice = {
+    number: invoiceFile.fileName.replace(/\.pdf$/, ''),
+    controlNumber: String(sale.number).replace(/^VTA/, 'CTRL'),
+    pdfUrl: invoiceFile.relativeUrl,
+    issuedAt: nowIso()
+  };
+
+  await Sale.updateOne({ _id: sale._id }, { $set: { invoice } });
+  sale.invoice = invoice;
+
+  const sellerId = sale.audit?.sellerId;
+  const io = req?.app?.get('io');
+  if (io && sellerId) {
+    io.to(`user:${String(sellerId)}`).emit(eventName, {
+      saleId: String(sale._id),
+      invoiceNumber: invoice.number
+    });
+  }
+
+  return invoiceFile;
 }
 
 function validateItems(items) {
@@ -102,7 +137,16 @@ export async function createSale(req, res, next) {
         });
       }
       if (existing.status === 'COMPLETED') {
-        const previous = await Sale.findById(existing.saleId).lean();
+        let previous = await Sale.findById(existing.saleId).lean();
+        // Si el proceso murió tras el commit, el reintento repara el comprobante.
+        if (previous && !previous.invoice) {
+          try {
+            await finalizeInvoice(req, previous);
+            previous = await Sale.findById(existing.saleId).lean();
+          } catch (error) {
+            console.error('[INVOICE] No se pudo reparar el comprobante en el reintento:', error.message);
+          }
+        }
         return ok(res, {
           data: previous ? serializeSale(previous) : null,
           message: 'Venta ya registrada (reintento idempotente).'
@@ -337,19 +381,7 @@ export async function createSale(req, res, next) {
 
     // Efectos posteriores al commit (patrón outbox). No revierten la venta si fallan.
     try {
-      const invoiceFile = await ensureInvoiceFile(saleDoc);
-      saleDoc.invoice = {
-        number: String(saleDoc.number).replace(/^VTA/, 'FAC'),
-        controlNumber: String(saleDoc.number).replace(/^VTA/, 'CTRL'),
-        pdfUrl: invoiceFile.relativeUrl,
-        issuedAt: nowIso()
-      };
-      await Sale.updateOne({ _id: saleDoc._id }, { $set: { invoice: saleDoc.invoice } });
-      req.app.get('io')?.emit('invoice:ready', {
-        saleId: String(saleDoc._id),
-        invoiceNumber: saleDoc.invoice.number,
-        pdfUrl: saleDoc.invoice.pdfUrl
-      });
+      await finalizeInvoice(req, saleDoc);
     } catch (error) {
       console.error('[INVOICE] No se pudo generar el PDF:', error.message);
     }
@@ -424,7 +456,9 @@ export async function downloadInvoice(req, res, next) {
     const sale = await Sale.findById(req.params.id).lean();
     if (!sale) throw notFound('Venta');
     const file = await ensureInvoiceFile(sale);
-    return res.download(file.filePath, file.fileName);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${file.fileName}"`);
+    return res.send(file.buffer);
   } catch (error) {
     return next(error);
   }
@@ -507,11 +541,20 @@ export async function voidSale(req, res, next) {
       await session.endSession();
     }
 
-    req.app.get('io')?.emit('stock:updated', {
-      saleId: String(sale._id),
-      status: 'VOID',
-      reason: 'SALE_VOID'
-    });
+    // La factura ya entregada debe dejar de decir COMPLETED.
+    try {
+      await finalizeInvoice(req, sale, 'invoice:voided');
+    } catch (error) {
+      console.error('[INVOICE] No se pudo regenerar la factura anulada:', error.message);
+    }
+
+    const io = req.app.get('io');
+    if (io && sale.audit?.sellerId) {
+      io.to(`user:${String(sale.audit.sellerId)}`).emit('sale:voided', {
+        saleId: String(sale._id),
+        status: 'VOID'
+      });
+    }
 
     return ok(res, { data: serializeSale(sale), message: 'Venta anulada y stock restaurado.' });
   } catch (error) {
@@ -535,17 +578,17 @@ export async function resendInvoice(req, res, next) {
     }
 
     const file = await ensureInvoiceFile(sale);
-    const pdfBuffer = await fs.readFile(file.filePath);
+    const invoiceNumber = file.fileName.replace(/\.pdf$/, '');
     const result = await sendInvoice({
       to,
-      subject: `Factura ${String(sale.number).replace(/^VTA/, 'FAC')}`,
+      subject: `Factura ${invoiceNumber}`,
       fileName: file.fileName,
-      pdfBuffer
+      pdfBuffer: file.buffer
     });
 
     console.log('[MAIL]', JSON.stringify({
       saleId: String(sale._id),
-      invoiceNumber: String(sale.number).replace(/^VTA/, 'FAC'),
+      invoiceNumber,
       channel: result.channel,
       sent: result.sent,
       queued: result.queued
@@ -557,6 +600,7 @@ export async function resendInvoice(req, res, next) {
         queued: result.queued,
         sent: result.sent,
         channel: result.channel,
+        queueFile: result.queueFile || null,
         pdfUrl: file.relativeUrl
       },
       message: result.sent ? 'Factura enviada correctamente.' : 'Factura encolada para envío posterior.'

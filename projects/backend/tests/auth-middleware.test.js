@@ -50,6 +50,21 @@ test('requireAuth falla con 500 si JWT_SECRET no está configurado', async () =>
   }
 });
 
+test('requireAuth rechaza tokens firmados con otro algoritmo', async () => {
+  const token = jwt.sign({ sub: 'usr-1', role: 'ADMIN' }, process.env.JWT_SECRET, {
+    algorithm: 'HS384'
+  });
+  const error = await invoke(requireAuth, { headers: { authorization: `Bearer ${token}` } });
+  assert.equal(error.status, 401);
+});
+
+test('requireAuth normaliza el alias Administrador para todas las rutas', async () => {
+  const req = bearer({ sub: 'usr-2', role: 'Administrador' });
+  assert.equal(await invoke(requireAuth, req), undefined);
+  assert.equal(req.user.role, 'ADMIN');
+  assert.equal(await invoke(requireRole('ADMIN'), req), undefined);
+});
+
 test('requireAdmin acepta ADMIN y el alias Administrador', async () => {
   assert.deepEqual([...ADMIN_ROLES], ['ADMIN', 'Administrador']);
 

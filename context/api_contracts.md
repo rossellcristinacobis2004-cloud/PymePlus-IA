@@ -340,7 +340,7 @@ Copia inmutable de la tasa vigente al momento de la operación. Debe persistirse
   "invoice": {
     "number": "FAC-2026-000123",
     "controlNumber": "CTRL-2026-000123",
-    "pdfUrl": "/uploads/documents/invoices/FAC-2026-000123.pdf",
+    "pdfUrl": "/api/sales/6501f2a4b9c1d4e8f00123ab/invoice.pdf",
     "issuedAt": "2026-11-23T14:34:05-04:00"
   },
   "audit": {
@@ -492,9 +492,10 @@ Copia inmutable de la tasa vigente al momento de la operación. Debe persistirse
 | `stock:low` | Server → Client | `{ productId, sku, name, available, minimum, severity }` |
 | `stock:expiring` | Server → Client | `{ productId, lot, expirationDate, daysRemaining }` |
 | `exchangeRate:updated` | Server → Client | `{ value, source, date, status, isFallback }` |
-| `invoice:ready` | Server → Client | `{ saleId, invoiceNumber, pdfUrl }` |
+| `invoice:ready` | Server → Client | `{ saleId, invoiceNumber }` (sala `user:<sellerId>`) |
+| `invoice:voided` / `sale:voided` | Server → Client | `{ saleId, status, invoiceNumber? }` (sala `user:<sellerId>`) |
 
-**Salas sugeridas:** `role:cashier`, `role:admin`, `warehouse`, `product:<id>`. El cliente debe autenticar el socket con el mismo JWT.
+**Salas sugeridas:** `role:cashier`, `role:admin`, `warehouse`, `product:<id>`, `user:<userId>`. El socket acepta el JWT en `auth.token` o `Authorization: Bearer`; sin token se conecta como invitado, sin salas privadas. Los comprobantes **no** se sirven como estáticos: `GET /uploads/documents/invoices/*` responde 404 y la única descarga autorizada es `GET /api/sales/:id/invoice.pdf`.
 
 ---
 

@@ -21,6 +21,8 @@ npm start
 
 El servidor escucha en `http://0.0.0.0:3500` por defecto.
 
+> **Producción:** cambia `SEED_ADMIN_PASSWORD` antes de ejecutar `npm run seed`. El valor de ejemplo del `.env.example` es público y no debe usarse en un despliegue real.
+
 ## Scripts
 | Script | Descripción |
 |---|---|
@@ -66,7 +68,8 @@ El servidor escucha en `http://0.0.0.0:3500` por defecto.
 - `POST /api/sales` exige el header `X-Idempotency-Key` (UUID).
 - USD es la moneda base; VES se deriva de la tasa BCV y se guarda un `rateSnapshot` por venta.
 - Cambiar precios (`priceUSD`, `costUSD`, `manualPriceVES`, `promotionPriceUSD`, `pricingMode`, `priceIncludesTax`, `taxType`, `pricing`) requiere rol `ADMIN` (alias entrante `Administrador`). Almacén conserva nombre, stock y lotes.
-- `helpers/pdf-invoice.js` es la fuente única del comprobante: descarga y correo usan el mismo `Buffer`. Se emite `invoice:ready` tras generarlo, fuera de la transacción.
+- `helpers/pdf-invoice.js` es la fuente única del comprobante: descarga y correo usan el mismo `Buffer` y la escritura en disco es atómica. Se emite `invoice:ready` a la sala `user:<sellerId>` sin exponer la URL, fuera de la transacción.
+- Los PDF no son archivos estáticos: `/uploads/documents/invoices/*` responde 404. La única descarga autorizada es `GET /api/sales/:id/invoice.pdf` con JWT.
 - `middlewares/auth.middleware.js` es la autorización canónica; `middlewares/auth.js` solo re-exporta por compatibilidad.
 - El detalle está en `/context/api_contracts.md` y `/context/business_rules.md`.
 

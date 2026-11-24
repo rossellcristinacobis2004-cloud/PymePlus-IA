@@ -21,7 +21,7 @@ function issueAccessToken(user) {
   return jwt.sign(
     { sub: user.id, name: user.name, role: user.role },
     process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
+    { algorithm: 'HS256', expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
   );
 }
 
@@ -31,6 +31,7 @@ function hashToken(token) {
 
 function issueRefreshToken(user) {
   const token = jwt.sign({ sub: user.id, type: 'refresh', jti: crypto.randomUUID() }, REFRESH_SECRET(), {
+    algorithm: 'HS256',
     expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d'
   });
   const expiresAt = new Date((jwt.decode(token).exp || 0) * 1000);
@@ -92,7 +93,7 @@ router.post('/refresh', async (req, res, next) => {
 
     let payload;
     try {
-      payload = jwt.verify(token, REFRESH_SECRET());
+      payload = jwt.verify(token, REFRESH_SECRET(), { algorithms: ['HS256'] });
     } catch {
       throw unauthorized('Refresh token inválido o expirado.');
     }

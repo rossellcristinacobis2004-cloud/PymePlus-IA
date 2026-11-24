@@ -216,21 +216,26 @@ export async function update(req, res, next) {
     const body = req.body || {};
     const updates = { audit: { updatedBy: req.user.id } };
 
+    // Acepta campos planos y la forma anidada `pricing` descrita en el contrato.
+    const pricing = body.pricing && typeof body.pricing === 'object' ? body.pricing : {};
+    const value = (key) => (body[key] !== undefined ? body[key] : pricing[key]);
+
     if (body.name !== undefined) updates.name = requireString(body.name, 'name');
     if (body.description !== undefined) updates.description = String(body.description);
     if (body.category !== undefined) updates.category = resolveCategory(body.category);
     if (body.imageUrl !== undefined) updates.imageUrl = body.imageUrl || null;
-    if (body.priceUSD !== undefined) updates['pricing.priceUSD'] = requirePositiveNumber(body.priceUSD, 'priceUSD');
-    if (body.costUSD !== undefined) updates['pricing.costUSD'] = Number(body.costUSD);
-    if (body.manualPriceVES !== undefined) updates['pricing.manualPriceVES'] = Number(body.manualPriceVES);
-    if (body.promotionPriceUSD !== undefined) updates['pricing.promotionPriceUSD'] = Number(body.promotionPriceUSD);
-    if (body.taxType !== undefined) updates['pricing.tax'] = body.taxType;
+    if (value('priceUSD') !== undefined) updates['pricing.priceUSD'] = requirePositiveNumber(value('priceUSD'), 'priceUSD');
+    if (value('costUSD') !== undefined) updates['pricing.costUSD'] = Number(value('costUSD'));
+    if (value('manualPriceVES') !== undefined) updates['pricing.manualPriceVES'] = Number(value('manualPriceVES'));
+    if (value('promotionPriceUSD') !== undefined) updates['pricing.promotionPriceUSD'] = Number(value('promotionPriceUSD'));
+    if (value('taxType') !== undefined) updates['pricing.tax'] = value('taxType');
+    if (value('priceIncludesTax') !== undefined) updates['pricing.priceIncludesTax'] = Boolean(value('priceIncludesTax'));
     if (body.stockMinimum !== undefined || body.minimumStock !== undefined) {
       updates['stock.minimum'] = Number(body.stockMinimum ?? body.minimumStock);
     }
     if (body.unit !== undefined) updates['stock.unit'] = String(body.unit);
     if (body.barcode !== undefined) updates.barcode = validateBarcode(body.barcode);
-    if (body.pricingMode !== undefined) updates['pricing.mode'] = body.pricingMode;
+    if (value('pricingMode') !== undefined) updates['pricing.mode'] = value('pricingMode');
     if (body.batches !== undefined) updates.batches = parseBatches(body.batches);
 
     const doc = await Product.findByIdAndUpdate(req.params.id, { $set: updates }, { returnDocument: 'after', runValidators: true }).lean();

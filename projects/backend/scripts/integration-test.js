@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'fs/promises';
+import path from 'path';
 import mongoose from 'mongoose';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
 
@@ -95,8 +97,18 @@ try {
   const emitted = [];
   const originalEmit = server.io.emit.bind(server.io);
   server.io.emit = (event, payload) => {
-    emitted.push({ event, payload });
+    emitted.push({ event, payload, room: null });
     return originalEmit(event, payload);
+  };
+  const originalTo = server.io.to.bind(server.io);
+  server.io.to = (room) => {
+    const target = originalTo(room);
+    const targetEmit = target.emit.bind(target);
+    target.emit = (event, payload) => {
+      emitted.push({ event, payload, room });
+      return targetEmit(event, payload);
+    };
+    return target;
   };
 
   const product = await request('/api/products', {
@@ -171,6 +183,22 @@ try {
   });
   check('reintento idempotente', retry.status === 200 && retry.body.data.id === sale.body.data.id);
 
+  // Simula la caída tras el commit: sin invoice, el reintento debe repararlo.
+  const { default: Sale } = await import('../api/sales/sale.model.js');
+  await Sale.updateOne({ _id: sale.body.data.id }, { $unset: { invoice: 1 } });
+  const repaired = await request('/api/sales', {
+    method: 'POST',
+    token,
+    body: saleBody,
+    headers: { 'X-Idempotency-Key': idempotencyKey }
+  });
+  const repairedSale = await Sale.findById(sale.body.data.id).lean();
+  check(
+    'reintento repara factura perdida',
+    repaired.status === 200 && Boolean(repairedSale.invoice?.pdfUrl),
+    JSON.stringify(repaired.body.errors || repairedSale.invoice)
+  );
+
   const persisted = await Product.findById(productId).lean();
   check('reintento no desconta dos veces', persisted.stock.available === 8, `stock=${persisted.stock.available}`);
 
@@ -225,6 +253,7 @@ try {
     resend.status === 202 && resend.body.data.queued === true && resend.body.data.sent === false,
     JSON.stringify(resend.body)
   );
+  const queuedMailFile = resend.body.data.queueFile;
 
   // Tasa BCV: carga manual, historial y vigencia.
   const rateDate = new Date(Date.now() - 4 * 3_600_000).toISOString().slice(0, 10);
@@ -329,6 +358,17 @@ try {
     JSON.stringify(updated.body)
   );
 
+  const nestedPricing = await request(`/api/products/${catalogId}`, {
+    method: 'PATCH',
+    token,
+    body: { pricing: { priceUSD: 7 } }
+  });
+  check(
+    'administrador aplica pricing anidado',
+    nestedPricing.status === 200 && nestedPricing.body.data.priceUSD === 7,
+    JSON.stringify(nestedPricing.body)
+  );
+
   const adjusted = await request(`/api/products/${catalogId}/stock-adjustments`, {
     method: 'POST',
     token,
@@ -367,10 +407,41 @@ try {
       pdfBuffer.toString('latin1').includes('Factura FAC-'),
     `status=${pdfResponse.status} contenido=${pdfResponse.headers.get('content-type')}`
   );
+  const invoiceReady = emitted.find(
+    (event) => event.event === 'invoice:ready' && event.payload.saleId === invoiceSale.body.data.id
+  );
   check(
-    'evento invoice:ready emitido',
-    emitted.some((event) => event.event === 'invoice:ready'),
-    JSON.stringify([...new Set(emitted.map((event) => event.event))])
+    'evento invoice:ready privado y sin URL del PDF',
+    Boolean(invoiceReady) &&
+      invoiceReady.room === `user:${login.body.data.user.id}` &&
+      invoiceReady.payload.saleId === invoiceSale.body.data.id &&
+      !('pdfUrl' in invoiceReady.payload),
+    JSON.stringify(invoiceReady || emitted.map((event) => event.event))
+  );
+
+  const directPdf = await fetch(`${base}/uploads/documents/invoices/${expectedPdfName}`);
+  check('facturas no sirven como archivos estáticos', directPdf.status === 404, `status=${directPdf.status}`);
+
+  if (queuedMailFile) {
+    const queuedMail = JSON.parse(
+      await fs.readFile(path.resolve('microservices/outbox', queuedMailFile), 'utf8')
+    );
+    check(
+      'correo usa exactamente el mismo PDF que la descarga',
+      queuedMail.fileName === expectedPdfName &&
+        Buffer.from(queuedMail.attachmentBase64, 'base64').equals(pdfBuffer),
+      JSON.stringify({ fileName: queuedMail.fileName, subject: queuedMail.subject })
+    );
+  }
+
+  const voidPdfResponse = await fetch(`${base}/api/sales/${sale.body.data.id}/invoice.pdf`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  const voidPdf = Buffer.from(await voidPdfResponse.arrayBuffer());
+  check(
+    'anulación regenera el comprobante como VOID',
+    voidPdfResponse.status === 200 && voidPdf.toString('latin1').includes('Estado: VOID'),
+    `status=${voidPdfResponse.status}`
   );
 
   // Autorización de precios por rol.

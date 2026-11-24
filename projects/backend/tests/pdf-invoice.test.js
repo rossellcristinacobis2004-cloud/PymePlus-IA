@@ -99,3 +99,32 @@ test('ventas largas paginan sin truncar líneas', () => {
 test('invoicePdf conserva el alias del helper anterior', () => {
   assert.equal(invoicePdf(sale()).toString('latin1'), generateInvoicePdf(sale()).toString('latin1'));
 });
+
+test('el xref apunta a objetos reales y /Count coincide con las páginas', () => {
+  const data = sale({
+    items: Array.from({ length: 80 }, (_unused, index) => ({
+      sku: `ITEM-${String(index).padStart(3, '0')}`,
+      name: `Producto ${index}`,
+      quantity: 1,
+      unitPrice: { amount: 1 },
+      subtotal: { amount: 1 },
+      tax: { rate: 0.16, amount: { amount: 0.16 } },
+      total: { amount: 1.16 }
+    }))
+  });
+
+  const pdf = generateInvoicePdf(data).toString('latin1');
+  const count = Number(pdf.match(/\/Count (\d+)/)[1]);
+  const size = Number(pdf.match(/\/Size (\d+)/)[1]);
+  const xrefOffset = Number(pdf.match(/startxref\n(\d+)/)[1]);
+
+  assert.equal(pdf.slice(xrefOffset, xrefOffset + 4), 'xref');
+  const offsets = [...pdf.slice(xrefOffset).matchAll(/^(\d{10}) 00000 n /gm)].map((match) =>
+    Number(match[1])
+  );
+  assert.equal(offsets.length, size - 1);
+  for (const offset of offsets) {
+    assert.match(pdf.slice(offset, offset + 20), /^\d+ 0 obj/);
+  }
+  assert.equal((pdf.match(/\/Type \/Page\b/g) || []).length, count);
+});

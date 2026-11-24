@@ -3,6 +3,11 @@ import { ApiError, forbidden, unauthorized } from '../helpers/errors.js';
 
 /** `ADMIN` es el valor persistido; el literal se acepta por compatibilidad de contrato. */
 export const ADMIN_ROLES = Object.freeze(['ADMIN', 'Administrador']);
+
+/** Unifica roles entrantes para que requireRole('ADMIN') también acepte el alias. */
+export function normalizeRole(role) {
+  return role === 'Administrador' ? 'ADMIN' : role;
+}
 export const PRICE_FIELDS = Object.freeze([
   'priceUSD',
   'costUSD',
@@ -33,7 +38,7 @@ export function requireAuth(req, _res, next) {
   }
 
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     if (payload.type === 'refresh') {
       return next(unauthorized('El token de renovación no es válido para acceder.'));
     }
@@ -41,7 +46,7 @@ export function requireAuth(req, _res, next) {
     req.user = {
       id: payload.sub,
       name: payload.name,
-      role: payload.role
+      role: normalizeRole(payload.role)
     };
     return next();
   } catch {
